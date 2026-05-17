@@ -241,6 +241,7 @@ export default function App() {
   const [page, setPage] = useState("dashboard");
   const [questions, setQuestions] = useLocalStorage("ugm_questions", () => generateMockQuestions());
   const [tryoutHistory, setTryoutHistory] = useLocalStorage("ugm_tryouts", []);
+  const [toPackets, setToPackets] = useLocalStorage("ugm_to_packets", []);
   const [practiceHistory, setPracticeHistory] = useLocalStorage("ugm_practice", []);
   const [bookmarks, setBookmarks] = useLocalStorage("ugm_bookmarks", []);
   const [srQueue, setSrQueue] = useLocalStorage("ugm_sr", []);
@@ -271,7 +272,7 @@ export default function App() {
         const backups = JSON.parse(localStorage.getItem("ugm_backups") || "[]");
         const backup = {
           date: new Date().toISOString(),
-          data: { questions, tryoutHistory, practiceHistory, bookmarks, srQueue, notes, calendar, goals }
+          data: { questions, tryoutHistory, practiceHistory, bookmarks, srQueue, notes, calendar, goals, toPackets }
         };
         backups.unshift(backup);
         localStorage.setItem("ugm_backups", JSON.stringify(backups.slice(0, 5)));
@@ -290,6 +291,7 @@ export default function App() {
   const ctx = {
     darkMode, setDarkMode, fontSize, setFontSize, page, setPage,
     questions, setQuestions, tryoutHistory, setTryoutHistory,
+    toPackets, setToPackets,
     practiceHistory, setPracticeHistory, bookmarks, setBookmarks,
     srQueue, setSrQueue, srDueToday, notes, setNotes,
     calendar, setCalendar, streak, setStreak, goals, setGoals,
@@ -297,7 +299,7 @@ export default function App() {
   };
 
   const exportData = () => {
-    const data = { questions, tryoutHistory, practiceHistory, bookmarks, srQueue, notes, calendar, goals };
+    const data = { questions, tryoutHistory, practiceHistory, bookmarks, srQueue, notes, calendar, goals, toPackets };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -320,6 +322,7 @@ export default function App() {
         if (data.notes) setNotes(data.notes);
         if (data.calendar) setCalendar(data.calendar);
         if (data.goals) setGoals(data.goals);
+        if (data.toPackets) setToPackets(data.toPackets);
         alert("Data berhasil diimpor!");
       } catch { alert("Format file tidak valid!"); }
     };
@@ -449,7 +452,7 @@ function Dashboard() {
 
   const radarData = subjectStats.map((s) => ({ subject: s.name, value: s.accuracy, fullMark: 100 }));
 
-  const scoreData = tryoutHistory.map((t, i) => ({ name: `TO-${i + 1}`, score: t.score, date: t.date }));
+  const scoreData = tryoutHistory.map((t, i) => ({ name: t.packetName || `TO-${i + 1}`, score: t.score, date: t.date }));
 
   const progress = lastTryout ? Math.min(100, Math.round((lastTryout.score / goals.score) * 100)) : 0;
 
@@ -779,8 +782,9 @@ function Practice() {
 
 // ==================== TRY OUT MODE ====================
 function TryOut() {
-  const { questions, tryoutHistory, setTryoutHistory, srQueue, setSrQueue } = useApp();
-  const [phase, setPhase] = useState("intro"); // intro, exam, result
+  const { questions, tryoutHistory, setTryoutHistory, toPackets, setToPackets, srQueue, setSrQueue } = useApp();
+  const [phase, setPhase] = useState("list"); // list, manage, exam, result
+  const [activePacket, setActivePacket] = useState(null);
   const [examQuestions, setExamQuestions] = useState([]);
   const [currentQ, setCurrentQ] = useState(0);
   const [answers, setAnswers] = useState({});
@@ -789,41 +793,157 @@ function TryOut() {
   const [questionStartTime, setQuestionStartTime] = useState(null);
   const [showNav, setShowNav] = useState(false);
   const [result, setResult] = useState(null);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showAddQ, setShowAddQ] = useState(false);
+  const [showBankPicker, setShowBankPicker] = useState(false);
+  const [bankSelected, setBankSelected] = useState(new Set());
+  const [bankFilter, setBankFilter] = useState("");
+  const packetFileRef = useRef(null);
 
-  const timer = useTimer(TRYOUT_DURATION, () => submitExam());
+  const [newPacket, setNewPacket] = useState({ name: "", description: "" });
+  const [newQ, setNewQ] = useState({
+    subject: "biologi", topic: "", subtopic: "", difficulty: "sedang",
+    question: "", options: ["", "", "", "", ""], correctAnswer: 0, explanation: "", image: "", explanationImage: "",
+  });
 
-  const startExam = () => {
-    const selected = [];
-    SUBJECTS.forEach((sub) => {
-      const subQs = questions.filter((q) => q.subject === sub.id);
-      const easy = subQs.filter((q) => q.difficulty === "mudah").sort(() => Math.random() - 0.5).slice(0, 5);
-      const med = subQs.filter((q) => q.difficulty === "sedang").sort(() => Math.random() - 0.5).slice(0, 10);
-      const hard = subQs.filter((q) => q.difficulty === "sulit").sort(() => Math.random() - 0.5).slice(0, 5);
-      let pool = [...easy, ...med, ...hard];
-      while (pool.length < PER_SUBJECT && subQs.length > pool.length) {
-        const remaining = subQs.filter((q) => !pool.includes(q));
-        pool.push(remaining[Math.floor(Math.random() * remaining.length)]);
-      }
-      selected.push(...pool.slice(0, PER_SUBJECT));
-    });
-    setExamQuestions(selected);
+  const getDuration = (packet) => (packet?.questions?.length || 0) * 2 * 60; // jumlah soal x 2 menit, in seconds
+  const timer = useTimer(7200, () => submitExam());
+
+  // ---- Packet CRUD ----
+  const createPacket = () => {
+    if (!newPacket.name.trim()) return alert("Nama paket harus diisi!");
+    const packet = {
+      id: `pkt_${Date.now()}`,
+      name: newPacket.name,
+      description: newPacket.description,
+      questions: [],
+      createdAt: new Date().toISOString(),
+    };
+    setToPackets((prev) => [...prev, packet]);
+    setNewPacket({ name: "", description: "" });
+    setShowCreateForm(false);
+    setActivePacket(packet.id);
+    setPhase("manage");
+  };
+
+  const deletePacket = (id) => {
+    if (!window.confirm("Hapus paket ini beserta semua soalnya?")) return;
+    setToPackets((prev) => prev.filter((p) => p.id !== id));
+    if (activePacket === id) { setActivePacket(null); setPhase("list"); }
+  };
+
+  const getPacket = () => toPackets.find((p) => p.id === activePacket);
+  const updatePacketQuestions = (qs) => {
+    setToPackets((prev) => prev.map((p) => p.id === activePacket ? { ...p, questions: qs } : p));
+  };
+
+  // ---- Add question to packet manually ----
+  const addQToPacket = () => {
+    if (!newQ.question || !newQ.topic) return alert("Isi soal dan topik!");
+    const q = { ...newQ, id: `toq_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`, tags: [newQ.subject, newQ.topic, newQ.difficulty].filter(Boolean) };
+    const pkt = getPacket();
+    updatePacketQuestions([...(pkt?.questions || []), q]);
+    setNewQ({ subject: "biologi", topic: "", subtopic: "", difficulty: "sedang", question: "", options: ["", "", "", "", ""], correctAnswer: 0, explanation: "", image: "", explanationImage: "" });
+    setShowAddQ(false);
+  };
+
+  const removeQFromPacket = (qId) => {
+    const pkt = getPacket();
+    updatePacketQuestions(pkt.questions.filter((q) => q.id !== qId));
+  };
+
+  // ---- Import from Bank Soal ----
+  const addFromBank = () => {
+    if (bankSelected.size === 0) return;
+    const pkt = getPacket();
+    const existingIds = new Set(pkt.questions.map((q) => q.id));
+    const toAdd = questions.filter((q) => bankSelected.has(q.id) && !existingIds.has(q.id));
+    updatePacketQuestions([...pkt.questions, ...toAdd]);
+    setBankSelected(new Set());
+    setShowBankPicker(false);
+    alert(`${toAdd.length} soal ditambahkan ke paket!`);
+  };
+
+  // ---- Import packet from JSON ----
+  const importPacketJSON = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        // Support: { name, questions: [...] } or [{ name, questions }] or just [questions]
+        const packets = Array.isArray(data) ? (data[0]?.questions ? data : [{ name: `Paket Import ${new Date().toLocaleDateString("id")}`, questions: data }]) : [data];
+        let totalAdded = 0;
+        const newPackets = packets.map((pkt) => {
+          const qs = (pkt.questions || pkt.soal || []).map((q, i) => ({
+            id: q.id || `toq_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 5)}`,
+            subject: q.subject || q.mapel || "biologi",
+            topic: q.topic || q.topik || "Umum",
+            subtopic: q.subtopic || q.subtopik || "Umum",
+            difficulty: q.difficulty || q.kesulitan || "sedang",
+            question: q.question || q.soal || q.pertanyaan || "",
+            options: q.options || q.pilihan || ["A", "B", "C", "D", "E"],
+            correctAnswer: q.correctAnswer ?? q.jawaban ?? q.correct ?? 0,
+            explanation: q.explanation || q.penjelasan || q.pembahasan || "",
+            image: q.image || q.gambar || "",
+            explanationImage: q.explanationImage || q.gambarPembahasan || "",
+            tags: q.tags || [],
+          })).filter((q) => q.question.trim());
+          totalAdded += qs.length;
+          return {
+            id: `pkt_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+            name: pkt.name || pkt.nama || `Paket Import`,
+            description: pkt.description || pkt.deskripsi || "",
+            questions: qs,
+            createdAt: new Date().toISOString(),
+          };
+        });
+        setToPackets((prev) => [...prev, ...newPackets]);
+        alert(`✅ ${newPackets.length} paket (${totalAdded} soal) berhasil diimpor!`);
+      } catch (err) { alert("Format JSON tidak valid! " + err.message); }
+    };
+    reader.readAsText(file);
+    if (packetFileRef.current) packetFileRef.current.value = "";
+  };
+
+  const downloadSamplePacket = () => {
+    const sample = {
+      name: "Paket TO 1 - Contoh",
+      description: "Contoh paket tryout untuk import",
+      questions: [
+        { subject: "biologi", topic: "Sel", subtopic: "Struktur Sel", difficulty: "sedang", question: "Organel sel yang berfungsi sebagai pusat pengendali adalah...", options: ["Mitokondria", "Nukleus", "Ribosom", "Lisosom", "Badan Golgi"], correctAnswer: 1, explanation: "Nukleus mengandung DNA.", image: "", explanationImage: "" },
+        { subject: "kimia", topic: "Stoikiometri", subtopic: "Mol", difficulty: "mudah", question: "1 mol zat mengandung partikel sebanyak...", options: ["6.02×10²³", "3.01×10²³", "6.02×10²²", "1.66×10⁻²⁴", "6.02×10²⁴"], correctAnswer: 0, explanation: "Bilangan Avogadro = 6.02×10²³", image: "", explanationImage: "" },
+        { subject: "english", topic: "Grammar", subtopic: "Tenses", difficulty: "sedang", question: "She ___ to school every day.", options: ["go", "goes", "going", "gone", "went"], correctAnswer: 1, explanation: "Subject 'She' menggunakan verb-s/es (simple present).", image: "", explanationImage: "" },
+      ]
+    };
+    const blob = new Blob([JSON.stringify(sample, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = "contoh-paket-to.json"; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // ---- Start Exam ----
+  const startExam = (packetId) => {
+    const pkt = toPackets.find((p) => p.id === packetId);
+    if (!pkt || pkt.questions.length === 0) return alert("Paket ini belum ada soal!");
+    setActivePacket(packetId);
+    setExamQuestions([...pkt.questions]);
     setAnswers({});
     setFlags(new Set());
     setTimePerQuestion({});
     setCurrentQ(0);
     setQuestionStartTime(Date.now());
-    setPhase("exam");
-    timer.reset(TRYOUT_DURATION);
+    const dur = getDuration(pkt);
+    timer.reset(dur);
     timer.start();
+    setPhase("exam");
   };
 
   const recordTime = (qIdx) => {
     if (questionStartTime) {
       const elapsed = (Date.now() - questionStartTime) / 1000;
-      setTimePerQuestion((prev) => ({
-        ...prev,
-        [qIdx]: (prev[qIdx] || 0) + elapsed,
-      }));
+      setTimePerQuestion((prev) => ({ ...prev, [qIdx]: (prev[qIdx] || 0) + elapsed }));
     }
   };
 
@@ -834,41 +954,28 @@ function TryOut() {
     setShowNav(false);
   };
 
-  const selectAnswer = (optIdx) => {
-    setAnswers((prev) => ({ ...prev, [currentQ]: optIdx }));
-  };
+  const selectAnswer = (optIdx) => { setAnswers((prev) => ({ ...prev, [currentQ]: optIdx })); };
 
   const toggleFlag = () => {
-    setFlags((prev) => {
-      const n = new Set(prev);
-      n.has(currentQ) ? n.delete(currentQ) : n.add(currentQ);
-      return n;
-    });
+    setFlags((prev) => { const n = new Set(prev); n.has(currentQ) ? n.delete(currentQ) : n.add(currentQ); return n; });
   };
 
   const submitExam = () => {
     recordTime(currentQ);
     timer.pause();
+    const pkt = toPackets.find((p) => p.id === activePacket);
+    const totalQ = examQuestions.length;
 
-    let totalScore = 0;
-    let correct = 0, wrong = 0, unanswered = 0;
+    let totalScore = 0, correct = 0, wrong = 0, unanswered = 0;
     const perSubject = SUBJECTS.map((sub) => ({ subject: sub.id, name: sub.name, correct: 0, wrong: 0, unanswered: 0, total: 0 }));
 
     examQuestions.forEach((q, i) => {
       const subStat = perSubject.find((p) => p.subject === q.subject);
-      subStat.total++;
-      if (answers[i] === undefined) {
-        unanswered++;
-        subStat.unanswered++;
-      } else if (answers[i] === q.correctAnswer) {
-        correct++;
-        subStat.correct++;
-        totalScore += SCORING.correct;
-      } else {
-        wrong++;
-        subStat.wrong++;
-        totalScore += SCORING.wrong;
-        // Add to SR queue
+      if (subStat) subStat.total++;
+      if (answers[i] === undefined) { unanswered++; if (subStat) subStat.unanswered++; }
+      else if (answers[i] === q.correctAnswer) { correct++; if (subStat) subStat.correct++; totalScore += SCORING.correct; }
+      else {
+        wrong++; if (subStat) subStat.wrong++; totalScore += SCORING.wrong;
         setSrQueue((prev) => {
           const existing = prev.find((s) => s.questionId === q.id);
           if (existing) return prev.map((s) => s.questionId === q.id ? { ...s, interval: 0, nextReview: getDaysFromNow(1) } : s);
@@ -877,23 +984,23 @@ function TryOut() {
       }
     });
 
-    // Normalize score (scaled)
-    const scaledScore = Math.round((totalScore / (TRYOUT_TOTAL * SCORING.correct)) * 1000);
+    const maxScore = totalQ * SCORING.correct;
+    const scaledScore = maxScore > 0 ? Math.round((totalScore / maxScore) * 1000) : 0;
+    const dur = getDuration(pkt);
 
     const res = {
       date: new Date().toISOString(),
+      packetId: activePacket,
+      packetName: pkt?.name || "Unknown",
       score: Math.max(0, scaledScore),
       rawScore: totalScore,
       correct, wrong, unanswered,
-      total: TRYOUT_TOTAL,
-      perSubject,
+      total: totalQ,
+      perSubject: perSubject.filter((p) => p.total > 0),
       timePerQuestion: { ...timePerQuestion },
-      duration: TRYOUT_DURATION - timer.time,
+      duration: dur - timer.time,
       questions: examQuestions.map((q, i) => ({
-        ...q,
-        userAnswer: answers[i],
-        timeSpent: timePerQuestion[i] || 0,
-        isCorrect: answers[i] === q.correctAnswer,
+        ...q, userAnswer: answers[i], timeSpent: timePerQuestion[i] || 0, isCorrect: answers[i] === q.correctAnswer,
       })),
     };
 
@@ -902,65 +1009,300 @@ function TryOut() {
     setPhase("result");
   };
 
-  if (phase === "intro") {
+  // ==== RENDER: Packet List ====
+  if (phase === "list") {
+    const completedCounts = {};
+    tryoutHistory.forEach((t) => { completedCounts[t.packetId] = (completedCounts[t.packetId] || 0) + 1; });
+
     return (
-      <div className="max-w-lg mx-auto space-y-6 animate-in">
-        <div className="text-center">
-          <div className="text-5xl mb-4">🎯</div>
-          <h1 className="text-2xl font-bold mb-2">Mode Try Out</h1>
-          <p className="text-slate-500 text-sm">Simulasi UM CBT UGM Saintek</p>
+      <div className="space-y-4 animate-in">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <h1 className="text-2xl font-bold">🎯 Try Out</h1>
+          <div className="flex gap-2">
+            <label className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium cursor-pointer">
+              📥 Impor Paket
+              <input ref={packetFileRef} type="file" accept=".json" onChange={importPacketJSON} className="hidden" />
+            </label>
+            <button onClick={downloadSamplePacket} className="px-3 py-1.5 bg-slate-500 text-white rounded-lg text-xs font-medium">📄 Contoh JSON</button>
+            <button onClick={() => setShowCreateForm(!showCreateForm)} className="px-3 py-1.5 bg-[#0033A0] text-white rounded-lg text-xs font-medium">+ Buat Paket</button>
+          </div>
         </div>
+
+        {showCreateForm && (
+          <Card>
+            <h3 className="font-semibold mb-3">Buat Paket Baru</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-slate-500">Nama Paket</label>
+                <input type="text" value={newPacket.name} onChange={(e) => setNewPacket({ ...newPacket, name: e.target.value })}
+                  placeholder="Mis: Paket TO 1 - April 2026" className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500">Deskripsi (opsional)</label>
+                <input type="text" value={newPacket.description} onChange={(e) => setNewPacket({ ...newPacket, description: e.target.value })}
+                  placeholder="Simulasi batch 1" className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm" />
+              </div>
+              <button onClick={createPacket} className="px-4 py-2 bg-[#0033A0] text-white rounded-lg text-sm font-medium">Simpan Paket</button>
+            </div>
+          </Card>
+        )}
+
         <Card>
           <div className="space-y-3 text-sm">
-            <InfoRow icon="📝" label="Jumlah Soal" value={`${TRYOUT_TOTAL} soal (${PER_SUBJECT}/mapel)`} />
-            <InfoRow icon="⏱️" label="Durasi" value="120 menit" />
             <InfoRow icon="✅" label="Benar" value="+4 poin" />
             <InfoRow icon="❌" label="Salah" value="-1 poin" />
             <InfoRow icon="⬜" label="Kosong" value="0 poin" />
-            <InfoRow icon="🏥" label="Target Kedokteran" value="780+" />
+            <InfoRow icon="⏱️" label="Waktu" value="Jumlah soal × 2 menit" />
+            <InfoRow icon="🏥" label="Target Kedokteran" value={`${PASSING_GRADE}+`} />
           </div>
         </Card>
-        <Card>
-          <p className="text-sm text-slate-500 mb-2">Proporsi Kesulitan</p>
-          <div className="flex gap-2">
-            <DiffBadgeSmall d="mudah" pct="25%" />
-            <DiffBadgeSmall d="sedang" pct="50%" />
-            <DiffBadgeSmall d="sulit" pct="25%" />
+
+        {toPackets.length === 0 ? (
+          <Card>
+            <div className="text-center py-8 text-slate-400">
+              <div className="text-4xl mb-3">📦</div>
+              <p className="font-medium">Belum ada paket Try Out</p>
+              <p className="text-sm mt-1">Buat paket baru atau impor dari JSON</p>
+            </div>
+          </Card>
+        ) : (
+          <div className="grid gap-3">
+            {toPackets.map((pkt) => {
+              const qCount = pkt.questions?.length || 0;
+              const dur = Math.round(getDuration(pkt) / 60);
+              const subjectCounts = {};
+              (pkt.questions || []).forEach((q) => { subjectCounts[q.subject] = (subjectCounts[q.subject] || 0) + 1; });
+              const timesCompleted = completedCounts[pkt.id] || 0;
+              const bestScore = tryoutHistory.filter((t) => t.packetId === pkt.id).reduce((best, t) => Math.max(best, t.score), 0);
+
+              return (
+                <Card key={pkt.id}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-bold text-base">{pkt.name}</h3>
+                      {pkt.description && <p className="text-xs text-slate-500 mt-0.5">{pkt.description}</p>}
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        <span className="text-xs px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full">📝 {qCount} soal</span>
+                        <span className="text-xs px-2 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-full">⏱️ {dur} menit</span>
+                        {timesCompleted > 0 && <span className="text-xs px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-full">✅ {timesCompleted}× dikerjakan</span>}
+                        {bestScore > 0 && <span className="text-xs px-2 py-0.5 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded-full">🏆 Best: {bestScore}</span>}
+                      </div>
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {SUBJECTS.filter((s) => subjectCounts[s.id]).map((s) => (
+                          <span key={s.id} className="text-xs px-1.5 py-0.5 rounded" style={{ background: s.color + "20", color: s.color }}>
+                            {s.icon} {subjectCounts[s.id]}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <button onClick={() => startExam(pkt.id)} disabled={qCount === 0}
+                        className="px-3 py-1.5 bg-[#0033A0] text-white rounded-lg text-xs font-medium disabled:opacity-40 hover:bg-blue-800 transition">
+                        🚀 Mulai
+                      </button>
+                      <button onClick={() => { setActivePacket(pkt.id); setPhase("manage"); }}
+                        className="px-3 py-1.5 bg-slate-100 dark:bg-slate-700 rounded-lg text-xs font-medium hover:bg-slate-200 dark:hover:bg-slate-600 transition">
+                        ✏️ Kelola
+                      </button>
+                      <button onClick={() => deletePacket(pkt.id)}
+                        className="px-3 py-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg text-xs font-medium transition">
+                        🗑️ Hapus
+                      </button>
+                    </div>
+                  </div>
+                </Card>
+              );
+            })}
           </div>
-        </Card>
-        <button onClick={startExam}
-          className="w-full py-3.5 bg-[#0033A0] text-white rounded-xl font-bold text-lg hover:bg-blue-800 transition-all shadow-lg hover:shadow-xl">
-          Mulai Try Out 🚀
-        </button>
+        )}
       </div>
     );
   }
 
+  // ==== RENDER: Manage Packet ====
+  if (phase === "manage") {
+    const pkt = getPacket();
+    if (!pkt) { setPhase("list"); return null; }
+    const qCount = pkt.questions.length;
+    const dur = Math.round(getDuration(pkt) / 60);
+
+    const bankQuestions = questions.filter((q) => {
+      if (bankFilter && q.subject !== bankFilter) return false;
+      return true;
+    });
+
+    return (
+      <div className="space-y-4 animate-in">
+        <div className="flex items-center gap-3">
+          <button onClick={() => setPhase("list")} className="px-3 py-1.5 bg-slate-100 dark:bg-slate-700 rounded-lg text-xs font-medium">← Kembali</button>
+          <h1 className="text-xl font-bold flex-1 truncate">{pkt.name}</h1>
+        </div>
+
+        <Card>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <p className="text-sm"><strong>{qCount}</strong> soal • <strong>{dur}</strong> menit</p>
+              <div className="flex flex-wrap gap-1 mt-1">
+                {SUBJECTS.map((s) => {
+                  const c = pkt.questions.filter((q) => q.subject === s.id).length;
+                  if (!c) return null;
+                  return <span key={s.id} className="text-xs px-1.5 py-0.5 rounded" style={{ background: s.color + "20", color: s.color }}>{s.icon} {c}</span>;
+                })}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setShowBankPicker(!showBankPicker)} className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium">📚 Dari Bank Soal</button>
+              <button onClick={() => setShowAddQ(!showAddQ)} className="px-3 py-1.5 bg-[#0033A0] text-white rounded-lg text-xs font-medium">+ Tambah Manual</button>
+              <button onClick={() => startExam(pkt.id)} disabled={qCount === 0}
+                className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium disabled:opacity-40">🚀 Mulai TO</button>
+            </div>
+          </div>
+        </Card>
+
+        {/* Bank Soal Picker */}
+        {showBankPicker && (
+          <Card>
+            <h3 className="font-semibold mb-3">📚 Pilih dari Bank Soal</h3>
+            <div className="flex gap-2 mb-3">
+              <select value={bankFilter} onChange={(e) => setBankFilter(e.target.value)}
+                className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm">
+                <option value="">Semua Mapel</option>
+                {SUBJECTS.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <span className="text-xs text-slate-500 self-center">{bankSelected.size} dipilih</span>
+            </div>
+            <div className="max-h-60 overflow-y-auto space-y-1">
+              {bankQuestions.slice(0, 200).map((q) => {
+                const sub = SUBJECTS.find((s) => s.id === q.subject);
+                const alreadyIn = pkt.questions.some((pq) => pq.id === q.id);
+                return (
+                  <label key={q.id} className={cn("flex items-start gap-2 p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer text-sm", alreadyIn && "opacity-40")}>
+                    <input type="checkbox" disabled={alreadyIn} checked={bankSelected.has(q.id)} onChange={() => {
+                      setBankSelected((prev) => { const n = new Set(prev); n.has(q.id) ? n.delete(q.id) : n.add(q.id); return n; });
+                    }} className="mt-0.5" />
+                    <span className="text-xs" style={{ color: sub?.color }}>{sub?.icon}</span>
+                    <span className="flex-1 truncate">{q.question}</span>
+                    {alreadyIn && <span className="text-xs text-slate-400">sudah ada</span>}
+                  </label>
+                );
+              })}
+            </div>
+            <button onClick={addFromBank} disabled={bankSelected.size === 0}
+              className="mt-3 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium disabled:opacity-40">
+              Tambahkan {bankSelected.size} Soal ke Paket
+            </button>
+          </Card>
+        )}
+
+        {/* Add Question Form */}
+        {showAddQ && (
+          <Card>
+            <h3 className="font-semibold mb-3">Tambah Soal Manual</h3>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div>
+                  <label className="text-xs text-slate-500">Mapel</label>
+                  <select value={newQ.subject} onChange={(e) => setNewQ({ ...newQ, subject: e.target.value })}
+                    className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm">
+                    {SUBJECTS.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500">Topik</label>
+                  <input type="text" value={newQ.topic} onChange={(e) => setNewQ({ ...newQ, topic: e.target.value })}
+                    className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500">Subtopik</label>
+                  <input type="text" value={newQ.subtopic} onChange={(e) => setNewQ({ ...newQ, subtopic: e.target.value })}
+                    className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500">Kesulitan</label>
+                  <select value={newQ.difficulty} onChange={(e) => setNewQ({ ...newQ, difficulty: e.target.value })}
+                    className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm">
+                    {DIFFICULTY.map((d) => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-slate-500">Soal</label>
+                <textarea value={newQ.question} onChange={(e) => setNewQ({ ...newQ, question: e.target.value })} rows={3}
+                  className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm" />
+              </div>
+              <ImageUploadButton value={newQ.image} onChange={(v) => setNewQ({ ...newQ, image: v })} label="Gambar Soal (opsional)" />
+              {newQ.options.map((opt, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input type="radio" name="pkt_correct" checked={newQ.correctAnswer === i} onChange={() => setNewQ({ ...newQ, correctAnswer: i })} />
+                  <span className="text-xs font-bold w-5">{String.fromCharCode(65 + i)}</span>
+                  <input type="text" value={opt} onChange={(e) => { const opts = [...newQ.options]; opts[i] = e.target.value; setNewQ({ ...newQ, options: opts }); }}
+                    placeholder={`Opsi ${String.fromCharCode(65 + i)}`} className="flex-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm" />
+                </div>
+              ))}
+              <div>
+                <label className="text-xs text-slate-500">Pembahasan</label>
+                <textarea value={newQ.explanation} onChange={(e) => setNewQ({ ...newQ, explanation: e.target.value })} rows={2}
+                  className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm" />
+              </div>
+              <ImageUploadButton value={newQ.explanationImage} onChange={(v) => setNewQ({ ...newQ, explanationImage: v })} label="Gambar Pembahasan (opsional)" />
+              <button onClick={addQToPacket} className="px-4 py-2 bg-[#0033A0] text-white rounded-lg text-sm font-medium">Simpan Soal ke Paket</button>
+            </div>
+          </Card>
+        )}
+
+        {/* Question List */}
+        <Card>
+          <h3 className="font-semibold mb-3">Daftar Soal ({qCount})</h3>
+          {qCount === 0 ? (
+            <p className="text-sm text-slate-400 text-center py-4">Belum ada soal. Tambahkan via form manual, bank soal, atau import JSON.</p>
+          ) : (
+            <div className="space-y-2 max-h-[500px] overflow-y-auto">
+              {pkt.questions.map((q, idx) => {
+                const sub = SUBJECTS.find((s) => s.id === q.subject);
+                return (
+                  <div key={q.id} className="flex items-start gap-2 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                    <span className="text-xs font-bold text-slate-400 mt-1 w-6">#{idx + 1}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 mb-0.5">
+                        <span className="text-xs" style={{ color: sub?.color }}>{sub?.icon}</span>
+                        <span className="text-xs text-slate-500">{q.topic} • {q.subtopic}</span>
+                        <DifficultyBadge difficulty={q.difficulty} small />
+                        {q.image && <span className="text-xs" title="Ada gambar">🖼️</span>}
+                      </div>
+                      <p className="text-sm truncate">{q.question}</p>
+                    </div>
+                    <button onClick={() => removeQFromPacket(q.id)} className="text-xs text-red-500 hover:text-red-700 mt-1 flex-shrink-0">✕</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Card>
+      </div>
+    );
+  }
+
+  // ==== RENDER: Exam ====
   if (phase === "exam") {
     const q = examQuestions[currentQ];
     const warning = timer.time <= 300;
     const sub = SUBJECTS.find((s) => s.id === q?.subject);
+    const totalQ = examQuestions.length;
 
     return (
       <div className="space-y-3 animate-in">
-        {/* Timer Bar */}
         <div className={cn("flex items-center justify-between p-3 rounded-xl", warning ? "bg-red-100 dark:bg-red-900/30" : "bg-white dark:bg-slate-800", "border border-slate-200 dark:border-slate-700")}>
           <div className="flex items-center gap-2">
             <span className={cn("text-xl font-mono font-bold", warning && "text-red-600 animate-pulse")}>{formatTime(timer.time)}</span>
             {warning && <span className="text-xs text-red-600 font-semibold">⚠️ Waktu hampir habis!</span>}
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => setShowNav(!showNav)} className="px-3 py-1.5 bg-slate-100 dark:bg-slate-700 rounded-lg text-xs font-medium">
-              📋 Navigasi
-            </button>
+            <button onClick={() => setShowNav(!showNav)} className="px-3 py-1.5 bg-slate-100 dark:bg-slate-700 rounded-lg text-xs font-medium">📋 Navigasi</button>
             <button onClick={() => { if (window.confirm("Yakin submit?")) submitExam(); }}
-              className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-medium">
-              Submit
-            </button>
+              className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-medium">Submit</button>
           </div>
         </div>
 
-        {/* Navigation Grid */}
         {showNav && (
           <div className="p-4 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
             <div className="grid grid-cols-10 gap-1.5">
@@ -970,35 +1312,27 @@ function TryOut() {
                 const isCurrent = i === currentQ;
                 return (
                   <button key={i} onClick={() => navigateTo(i)}
-                    className={cn(
-                      "w-8 h-8 rounded-lg text-xs font-semibold transition-all flex items-center justify-center",
+                    className={cn("w-8 h-8 rounded-lg text-xs font-semibold transition-all flex items-center justify-center",
                       isCurrent ? "ring-2 ring-blue-500 ring-offset-1" : "",
-                      flagged ? "bg-amber-400 text-amber-900" :
-                      answered ? "bg-green-500 text-white" :
-                      "bg-slate-200 dark:bg-slate-600 text-slate-600 dark:text-slate-300"
-                    )}>
-                    {i + 1}
-                  </button>
+                      flagged ? "bg-amber-400 text-amber-900" : answered ? "bg-green-500 text-white" : "bg-slate-200 dark:bg-slate-600 text-slate-600 dark:text-slate-300"
+                    )}>{i + 1}</button>
                 );
               })}
             </div>
             <div className="flex gap-4 mt-3 text-xs text-slate-500">
               <span>🟢 Dijawab: {Object.keys(answers).length}</span>
               <span>🟡 Ditandai: {flags.size}</span>
-              <span>⬜ Belum: {TRYOUT_TOTAL - Object.keys(answers).length}</span>
+              <span>⬜ Belum: {totalQ - Object.keys(answers).length}</span>
             </div>
           </div>
         )}
 
-        {/* Question */}
         <Card>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
-              <span className="px-2 py-0.5 rounded-full text-xs font-semibold text-white" style={{ background: sub?.color }}>
-                {sub?.icon} {sub?.name}
-              </span>
+              <span className="px-2 py-0.5 rounded-full text-xs font-semibold text-white" style={{ background: sub?.color }}>{sub?.icon} {sub?.name}</span>
               <DifficultyBadge difficulty={q.difficulty} />
-              <span className="text-xs text-slate-500">#{currentQ + 1}</span>
+              <span className="text-xs text-slate-500">#{currentQ + 1}/{totalQ}</span>
             </div>
             <button onClick={toggleFlag} className={cn("px-2 py-1 rounded-lg text-xs font-medium border transition",
               flags.has(currentQ) ? "bg-amber-100 border-amber-400 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300" : "border-slate-300 dark:border-slate-600")}>
@@ -1012,36 +1346,30 @@ function TryOut() {
           <div className="space-y-2">
             {q.options.map((opt, i) => (
               <button key={i} onClick={() => selectAnswer(i)}
-                className={cn(
-                  "w-full text-left p-3 rounded-xl border-2 transition-all flex items-start gap-3",
-                  answers[currentQ] === i ? "border-[#0033A0] bg-blue-50 dark:bg-blue-900/20" : "border-slate-200 dark:border-slate-700 hover:border-slate-400"
-                )}>
+                className={cn("w-full text-left p-3 rounded-xl border-2 transition-all flex items-start gap-3",
+                  answers[currentQ] === i ? "border-[#0033A0] bg-blue-50 dark:bg-blue-900/20" : "border-slate-200 dark:border-slate-700 hover:border-slate-400")}>
                 <span className={cn("w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0",
-                  answers[currentQ] === i ? "bg-[#0033A0] text-white" : "bg-slate-100 dark:bg-slate-700"
-                )}>{String.fromCharCode(65 + i)}</span>
+                  answers[currentQ] === i ? "bg-[#0033A0] text-white" : "bg-slate-100 dark:bg-slate-700")}>{String.fromCharCode(65 + i)}</span>
                 <span className="text-sm pt-0.5">{opt}</span>
               </button>
             ))}
           </div>
         </Card>
 
-        {/* Nav Buttons */}
         <div className="flex gap-2">
           <button onClick={() => navigateTo(Math.max(0, currentQ - 1))} disabled={currentQ === 0}
-            className="flex-1 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-sm font-medium disabled:opacity-40">
-            ← Sebelumnya
-          </button>
-          <button onClick={() => navigateTo(Math.min(examQuestions.length - 1, currentQ + 1))} disabled={currentQ === examQuestions.length - 1}
-            className="flex-1 py-2.5 rounded-xl bg-[#0033A0] text-white text-sm font-medium disabled:opacity-40">
-            Berikutnya →
-          </button>
+            className="flex-1 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-sm font-medium disabled:opacity-40">← Sebelumnya</button>
+          <button onClick={() => navigateTo(Math.min(totalQ - 1, currentQ + 1))} disabled={currentQ === totalQ - 1}
+            className="flex-1 py-2.5 rounded-xl bg-[#0033A0] text-white text-sm font-medium disabled:opacity-40">Berikutnya →</button>
         </div>
       </div>
     );
   }
 
+  // ==== RENDER: Result ====
   if (phase === "result" && result) {
-    const avgTime = Object.values(result.timePerQuestion).reduce((s, t) => s + t, 0) / TRYOUT_TOTAL;
+    const totalQ = result.total;
+    const avgTime = Object.values(result.timePerQuestion).reduce((s, t) => s + t, 0) / (totalQ || 1);
     const passTarget = result.score >= PASSING_GRADE;
 
     return (
@@ -1049,7 +1377,7 @@ function TryOut() {
         <div className={cn("text-center p-6 rounded-2xl", passTarget ? "bg-green-50 dark:bg-green-900/20" : "bg-amber-50 dark:bg-amber-900/20")}>
           <div className="text-5xl mb-2">{passTarget ? "🎉" : "💪"}</div>
           <h1 className="text-3xl font-bold mb-1">{result.score}</h1>
-          <p className="text-sm text-slate-500">Target: {PASSING_GRADE} • {passTarget ? "Tercapai!" : `Kurang ${PASSING_GRADE - result.score} poin`}</p>
+          <p className="text-sm text-slate-500">{result.packetName} • Target: {PASSING_GRADE} • {passTarget ? "Tercapai!" : `Kurang ${PASSING_GRADE - result.score} poin`}</p>
         </div>
 
         <div className="grid grid-cols-3 gap-3">
@@ -1084,7 +1412,6 @@ function TryOut() {
           </div>
         </Card>
 
-        {/* Question Review */}
         <Card title="📝 Review Soal">
           <div className="space-y-3 max-h-96 overflow-y-auto">
             {result.questions.map((q, i) => (
@@ -1109,8 +1436,8 @@ function TryOut() {
           </div>
         </Card>
 
-        <button onClick={() => setPhase("intro")} className="w-full py-3 bg-[#0033A0] text-white rounded-xl font-semibold">
-          Kembali ke Menu Try Out
+        <button onClick={() => setPhase("list")} className="w-full py-3 bg-[#0033A0] text-white rounded-xl font-semibold">
+          Kembali ke Daftar Paket
         </button>
       </div>
     );
@@ -1124,7 +1451,7 @@ function Analysis() {
   const { tryoutHistory, practiceHistory, questions } = useApp();
 
   const scoreData = tryoutHistory.map((t, i) => ({
-    name: `TO-${i + 1}`,
+    name: t.packetName ? `${t.packetName}` : `TO-${i + 1}`,
     score: t.score,
     ...SUBJECTS.reduce((acc, sub) => {
       const ps = t.perSubject?.find((p) => p.subject === sub.id);
