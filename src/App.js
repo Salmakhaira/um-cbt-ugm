@@ -6,16 +6,16 @@ import katex from "katex";
 const SUBJECTS = [
   { id: "biologi", name: "Biologi", icon: "🧬", color: "#22c55e" },
   { id: "kimia", name: "Kimia", icon: "⚗️", color: "#f59e0b" },
-  { id: "bindonesia", name: "Bahasa Indonesia", icon: "⚛️", color: "#3b82f6" },
-  { id: "binggris", name: "Bahasa Inggris", icon: "⚛️", color: "#3b82f6" },
-  { id: "tpa", name: "TPA", icon: "⚛️", color: "#3b82f6" },
-  { id: "matematika", name: "Matematika Dasar", icon: "📐", color: "#a855f7" },
+  { id: "mat_dasar", name: "Matematika Dasar", icon: "📐", color: "#a855f7" },
+  { id: "english", name: "Bahasa Inggris", icon: "🌐", color: "#3b82f6" },
+  { id: "indonesia", name: "Bahasa Indonesia", icon: "📖", color: "#ef4444" },
+  { id: "tpa", name: "TPA", icon: "🧠", color: "#06b6d4" },
 ];
 const DIFFICULTY = ["mudah", "sedang", "sulit"];
 const SCORING = { correct: 4, wrong: -1, unanswered: 0 };
 const TRYOUT_DURATION = 120 * 60;
-const TRYOUT_TOTAL = 80;
-const PER_SUBJECT = 20;
+const PER_SUBJECT = 15;
+const TRYOUT_TOTAL = SUBJECTS.length * PER_SUBJECT;
 const PASSING_GRADE = 780;
 const SR_INTERVALS = [1, 3, 7, 14];
 
@@ -34,17 +34,29 @@ const generateMockQuestions = () => {
       { topic: "Termokimia", subtopics: ["Entalpi", "Hukum Hess", "Kalorimetri"] },
       { topic: "Kesetimbangan", subtopics: ["Tetapan Kesetimbangan", "Pergeseran Kesetimbangan", "pH Larutan"] },
     ],
-    fisika: [
-      { topic: "Mekanika", subtopics: ["Kinematika", "Dinamika", "Usaha & Energi"] },
-      { topic: "Gelombang", subtopics: ["Gelombang Bunyi", "Gelombang Cahaya", "Interferensi"] },
-      { topic: "Listrik", subtopics: ["Hukum Ohm", "Rangkaian Listrik", "GGL Induksi"] },
-      { topic: "Termodinamika", subtopics: ["Hukum Termodinamika", "Mesin Carnot", "Entropi"] },
-    ],
-    matematika: [
+    mat_dasar: [
       { topic: "Kalkulus", subtopics: ["Limit", "Turunan", "Integral"] },
       { topic: "Aljabar", subtopics: ["Matriks", "Vektor", "Persamaan Kuadrat"] },
       { topic: "Trigonometri", subtopics: ["Identitas", "Persamaan Trigonometri", "Grafik"] },
       { topic: "Statistika", subtopics: ["Peluang", "Distribusi", "Kombinatorik"] },
+    ],
+    english: [
+      { topic: "Reading Comprehension", subtopics: ["Main Idea", "Inference", "Vocabulary in Context"] },
+      { topic: "Grammar", subtopics: ["Tenses", "Subject-Verb Agreement", "Conditional Sentences"] },
+      { topic: "Error Recognition", subtopics: ["Word Order", "Prepositions", "Articles"] },
+      { topic: "Cloze Test", subtopics: ["Conjunctions", "Contextual Vocabulary", "Sentence Completion"] },
+    ],
+    indonesia: [
+      { topic: "Pemahaman Bacaan", subtopics: ["Ide Pokok", "Kesimpulan", "Makna Kata"] },
+      { topic: "Tata Bahasa", subtopics: ["EYD/PUEBI", "Kalimat Efektif", "Kata Baku"] },
+      { topic: "Penalaran", subtopics: ["Silogisme", "Analogi", "Sebab-Akibat"] },
+      { topic: "Kebahasaan", subtopics: ["Majas", "Konjungsi", "Kata Serapan"] },
+    ],
+    tpa: [
+      { topic: "Verbal", subtopics: ["Sinonim", "Antonim", "Analogi Kata"] },
+      { topic: "Numerik", subtopics: ["Deret Angka", "Aritmatika", "Perbandingan Kuantitatif"] },
+      { topic: "Figural", subtopics: ["Pola Gambar", "Rotasi & Refleksi", "Pengelompokan"] },
+      { topic: "Logika", subtopics: ["Logika Formal", "Penalaran Analitis", "Diagram Venn"] },
     ],
   };
 
@@ -900,7 +912,7 @@ function TryOut() {
         </div>
         <Card>
           <div className="space-y-3 text-sm">
-            <InfoRow icon="📝" label="Jumlah Soal" value="80 soal (20/mapel)" />
+            <InfoRow icon="📝" label="Jumlah Soal" value={`${TRYOUT_TOTAL} soal (${PER_SUBJECT}/mapel)`} />
             <InfoRow icon="⏱️" label="Durasi" value="120 menit" />
             <InfoRow icon="✅" label="Benar" value="+4 poin" />
             <InfoRow icon="❌" label="Salah" value="-1 poin" />
