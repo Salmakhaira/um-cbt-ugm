@@ -6,8 +6,10 @@ import katex from "katex";
 const SUBJECTS = [
   { id: "biologi", name: "Biologi", icon: "🧬", color: "#22c55e" },
   { id: "kimia", name: "Kimia", icon: "⚗️", color: "#f59e0b" },
-  { id: "fisika", name: "Fisika", icon: "⚛️", color: "#3b82f6" },
-  { id: "matematika", name: "Matematika IPA", icon: "📐", color: "#a855f7" },
+  { id: "bindonesia", name: "Bahasa Indonesia", icon: "⚛️", color: "#3b82f6" },
+  { id: "binggris", name: "Bahasa Inggris", icon: "⚛️", color: "#3b82f6" },
+  { id: "tpa", name: "TPA", icon: "⚛️", color: "#3b82f6" },
+  { id: "matematika", name: "Matematika Dasar", icon: "📐", color: "#a855f7" },
 ];
 const DIFFICULTY = ["mudah", "sedang", "sulit"];
 const SCORING = { correct: 4, wrong: -1, unanswered: 0 };
