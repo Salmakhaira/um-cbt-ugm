@@ -172,6 +172,54 @@ function Latex({ children }) {
   return <span ref={ref}>{children}</span>;
 }
 
+// ==================== QUESTION IMAGE ====================
+function QuestionImage({ src, alt, className }) {
+  const [zoomed, setZoomed] = useState(false);
+  if (!src) return null;
+  return (
+    <>
+      <img src={src} alt={alt || "Gambar soal"} onClick={() => setZoomed(true)}
+        className={cn("max-w-full max-h-64 rounded-lg border border-slate-200 dark:border-slate-700 cursor-zoom-in object-contain my-3 hover:opacity-90 transition", className)} />
+      {zoomed && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" onClick={() => setZoomed(false)}>
+          <img src={src} alt={alt || "Gambar soal"} className="max-w-full max-h-[90vh] rounded-lg object-contain" />
+          <button onClick={() => setZoomed(false)} className="absolute top-4 right-4 text-white text-2xl bg-black/50 w-10 h-10 rounded-full">✕</button>
+        </div>
+      )}
+    </>
+  );
+}
+
+function ImageUploadButton({ value, onChange, label }) {
+  const handleFile = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { alert("Ukuran gambar maksimal 5MB!"); return; }
+    if (!file.type.startsWith("image/")) { alert("File harus berupa gambar!"); return; }
+    const reader = new FileReader();
+    reader.onload = (ev) => onChange(ev.target.result);
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+  return (
+    <div className="space-y-2">
+      <label className="text-xs text-slate-500">{label || "Gambar"}</label>
+      <div className="flex items-center gap-2">
+        <label className="px-3 py-2 bg-slate-100 dark:bg-slate-700 rounded-lg text-xs font-medium cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-600 transition border border-slate-300 dark:border-slate-600">
+          📷 {value ? "Ganti Gambar" : "Upload Gambar"}
+          <input type="file" accept="image/*" onChange={handleFile} className="hidden" />
+        </label>
+        {value && (
+          <>
+            <img src={value} alt="preview" className="h-12 w-12 object-cover rounded-lg border border-slate-300 dark:border-slate-600" />
+            <button onClick={() => onChange("")} className="text-xs text-red-500 hover:text-red-700">✕ Hapus</button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ==================== MAIN APP ====================
 export default function App() {
   const [darkMode, setDarkMode] = useLocalStorage("ugm_dark", false);
@@ -592,6 +640,7 @@ function Practice() {
           </div>
 
           <p className="text-base mb-4 leading-relaxed">{q.question}</p>
+          <QuestionImage src={q.image} alt={`Gambar soal ${q.topic}`} />
 
           <div className="space-y-2">
             {q.options.map((opt, i) => {
@@ -624,6 +673,7 @@ function Practice() {
             <div className="mt-4 p-4 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
               <h4 className="font-bold text-sm mb-1 text-blue-800 dark:text-blue-300">💡 Pembahasan</h4>
               <p className="text-sm text-blue-700 dark:text-blue-200">{q.explanation}</p>
+              <QuestionImage src={q.explanationImage} alt="Gambar pembahasan" />
             </div>
           )}
 
@@ -943,6 +993,7 @@ function TryOut() {
           </div>
 
           <p className="text-base mb-4 leading-relaxed">{q.question}</p>
+          <QuestionImage src={q.image} alt={`Gambar soal ${q.topic}`} />
 
           <div className="space-y-2">
             {q.options.map((opt, i) => (
@@ -1030,12 +1081,14 @@ function TryOut() {
                   <span className="text-xs text-slate-500">{q.topic} • {q.subtopic}</span>
                 </div>
                 <p className="text-xs text-slate-600 dark:text-slate-400 mb-1 line-clamp-2">{q.question}</p>
+                {q.image && <img src={q.image} alt="Gambar soal" className="max-h-32 rounded border border-slate-200 dark:border-slate-700 my-1" />}
                 {q.userAnswer !== undefined && !q.isCorrect && (
                   <p className="text-xs text-red-500">Jawaban: {String.fromCharCode(65 + q.userAnswer)} | Benar: {String.fromCharCode(65 + q.correctAnswer)}</p>
                 )}
                 <details className="mt-1">
                   <summary className="text-xs text-blue-600 dark:text-blue-400 cursor-pointer">Lihat pembahasan</summary>
                   <p className="text-xs mt-1 text-slate-600 dark:text-slate-400">{q.explanation}</p>
+                  {q.explanationImage && <img src={q.explanationImage} alt="Gambar pembahasan" className="max-h-32 rounded border border-slate-200 dark:border-slate-700 mt-1" />}
                 </details>
               </div>
             ))}
@@ -1627,6 +1680,7 @@ function ReviewPage() {
                     <span className="text-xs text-slate-500">Interval: {SR_INTERVALS[q.srData.interval]} hari</span>
                   </div>
                   <p className="mb-4">{q.question}</p>
+                  <QuestionImage src={q.image} alt={`Gambar soal ${q.topic}`} />
                   <div className="space-y-2">
                     {q.options.map((opt, i) => {
                       let cls = "border-slate-200 dark:border-slate-700";
@@ -1651,6 +1705,7 @@ function ReviewPage() {
                     <>
                       <div className="mt-4 p-4 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
                         <p className="text-sm">{q.explanation}</p>
+                        <QuestionImage src={q.explanationImage} alt="Gambar pembahasan" />
                       </div>
                       {current < dueQuestions.length - 1 ? (
                         <button onClick={next} className="mt-3 w-full py-2.5 bg-[#0033A0] text-white rounded-xl font-semibold text-sm">
@@ -1684,6 +1739,7 @@ function QuestionBank() {
   const [newQ, setNewQ] = useState({
     subject: "biologi", topic: "", subtopic: "", difficulty: "sedang",
     question: "", options: ["", "", "", "", ""], correctAnswer: 0, explanation: "", tags: [],
+    image: "", explanationImage: "",
   });
 
   const filtered = questions.filter((q) => {
@@ -1733,9 +1789,11 @@ function QuestionBank() {
       id: `q${Date.now()}`,
       tags: [newQ.subject, newQ.topic, newQ.subtopic, newQ.difficulty].filter(Boolean),
     }]);
-    setNewQ({ subject: "biologi", topic: "", subtopic: "", difficulty: "sedang", question: "", options: ["", "", "", "", ""], correctAnswer: 0, explanation: "", tags: [] });
+    setNewQ({ subject: "biologi", topic: "", subtopic: "", difficulty: "sedang", question: "", options: ["", "", "", "", ""], correctAnswer: 0, explanation: "", tags: [], image: "", explanationImage: "" });
     setShowAdd(false);
   };
+
+  const fileInputRef = useRef(null);
 
   const importJSON = (e) => {
     const file = e.target.files[0];
@@ -1744,12 +1802,73 @@ function QuestionBank() {
     reader.onload = (ev) => {
       try {
         const data = JSON.parse(ev.target.result);
-        const qs = Array.isArray(data) ? data : data.questions || [];
-        setQuestions((prev) => [...prev, ...qs.map((q, i) => ({ ...q, id: q.id || `import_${Date.now()}_${i}` }))]);
-        alert(`${qs.length} soal berhasil diimpor!`);
-      } catch { alert("Format JSON tidak valid!"); }
+        let qs = Array.isArray(data) ? data : data.questions || data.soal || [];
+        if (!Array.isArray(qs) || qs.length === 0) {
+          alert("Tidak ada soal ditemukan. Pastikan JSON berisi array soal atau object dengan key 'questions'.");
+          return;
+        }
+        const validated = qs.map((q, i) => ({
+          id: q.id || `import_${Date.now()}_${i}`,
+          subject: q.subject || q.mapel || "biologi",
+          topic: q.topic || q.topik || "Umum",
+          subtopic: q.subtopic || q.subtopik || "Umum",
+          difficulty: q.difficulty || q.kesulitan || "sedang",
+          question: q.question || q.soal || q.pertanyaan || "",
+          options: q.options || q.pilihan || q.opsi || ["A", "B", "C", "D", "E"],
+          correctAnswer: q.correctAnswer ?? q.jawaban ?? q.correct ?? 0,
+          explanation: q.explanation || q.penjelasan || q.pembahasan || "",
+          image: q.image || q.gambar || q.gambarSoal || "",
+          explanationImage: q.explanationImage || q.gambarPembahasan || "",
+          tags: q.tags || [q.subject || "biologi", q.topic || "Umum"],
+        })).filter(q => q.question.trim() !== "");
+        if (validated.length === 0) {
+          alert("Semua soal kosong atau format tidak sesuai.");
+          return;
+        }
+        setQuestions((prev) => [...prev, ...validated]);
+        alert(`✅ ${validated.length} soal berhasil diimpor!`);
+      } catch (err) {
+        alert("Format JSON tidak valid! Error: " + err.message);
+      }
     };
     reader.readAsText(file);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const downloadSampleJSON = () => {
+    const sample = [
+      {
+        subject: "biologi",
+        topic: "Sel",
+        subtopic: "Struktur Sel",
+        difficulty: "sedang",
+        question: "Organel sel yang berfungsi sebagai pusat pengendali sel adalah...",
+        options: ["Mitokondria", "Nukleus", "Ribosom", "Lisosom", "Badan Golgi"],
+        correctAnswer: 1,
+        explanation: "Nukleus (inti sel) mengandung DNA dan berfungsi sebagai pusat pengendali seluruh aktivitas sel.",
+        image: "",
+        explanationImage: ""
+      },
+      {
+        subject: "kimia",
+        topic: "Stoikiometri",
+        subtopic: "Mol",
+        difficulty: "mudah",
+        question: "Jumlah partikel dalam 1 mol zat adalah...",
+        options: ["6.02 x 10^23", "3.01 x 10^23", "6.02 x 10^22", "1.66 x 10^-24", "6.02 x 10^24"],
+        correctAnswer: 0,
+        explanation: "Bilangan Avogadro menyatakan bahwa 1 mol zat mengandung 6.02 x 10^23 partikel.",
+        image: "https://contoh.com/gambar-soal.png (URL atau kosongkan)",
+        explanationImage: "https://contoh.com/gambar-pembahasan.png (URL atau kosongkan)"
+      }
+    ];
+    const blob = new Blob([JSON.stringify(sample, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "contoh-soal-import.json";
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -1759,8 +1878,9 @@ function QuestionBank() {
         <div className="flex gap-2">
           <label className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium cursor-pointer">
             📥 Impor JSON
-            <input type="file" accept=".json" onChange={importJSON} className="hidden" />
+            <input ref={fileInputRef} type="file" accept=".json" onChange={importJSON} className="hidden" />
           </label>
+          <button onClick={downloadSampleJSON} className="px-3 py-1.5 bg-slate-500 text-white rounded-lg text-xs font-medium">📄 Contoh Format</button>
           <button onClick={() => setShowAdd(!showAdd)} className="px-3 py-1.5 bg-[#0033A0] text-white rounded-lg text-xs font-medium">+ Tambah Soal</button>
         </div>
       </div>
@@ -1828,6 +1948,7 @@ function QuestionBank() {
               <textarea value={newQ.question} onChange={(e) => setNewQ({ ...newQ, question: e.target.value })} rows={3}
                 className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm" />
             </div>
+            <ImageUploadButton value={newQ.image} onChange={(v) => setNewQ({ ...newQ, image: v })} label="Gambar Soal (opsional)" />
             {newQ.options.map((opt, i) => (
               <div key={i} className="flex items-center gap-2">
                 <input type="radio" name="correct" checked={newQ.correctAnswer === i} onChange={() => setNewQ({ ...newQ, correctAnswer: i })} />
@@ -1845,6 +1966,7 @@ function QuestionBank() {
               <textarea value={newQ.explanation} onChange={(e) => setNewQ({ ...newQ, explanation: e.target.value })} rows={2}
                 className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm" />
             </div>
+            <ImageUploadButton value={newQ.explanationImage} onChange={(v) => setNewQ({ ...newQ, explanationImage: v })} label="Gambar Pembahasan (opsional)" />
             <button onClick={addQuestion} className="px-4 py-2 bg-[#0033A0] text-white rounded-lg text-sm font-medium">Simpan Soal</button>
           </div>
         </Card>
@@ -1867,6 +1989,7 @@ function QuestionBank() {
                     <span className="text-xs" style={{ color: sub?.color }}>{sub?.icon}</span>
                     <span className="text-xs text-slate-500">{q.topic} • {q.subtopic}</span>
                     <DifficultyBadge difficulty={q.difficulty} small />
+                    {q.image && <span className="text-xs" title="Ada gambar">🖼️</span>}
                   </div>
                   <p className="text-sm truncate">{q.question}</p>
                 </div>
