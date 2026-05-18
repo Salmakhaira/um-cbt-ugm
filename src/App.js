@@ -796,6 +796,7 @@ function TryOut() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showAddQ, setShowAddQ] = useState(false);
   const [showBankPicker, setShowBankPicker] = useState(false);
+  const [editingPktQ, setEditingPktQ] = useState(null);
   const [bankSelected, setBankSelected] = useState(new Set());
   const [bankFilter, setBankFilter] = useState("");
   const packetFileRef = useRef(null);
@@ -850,6 +851,17 @@ function TryOut() {
   const removeQFromPacket = (qId) => {
     const pkt = getPacket();
     updatePacketQuestions(pkt.questions.filter((q) => q.id !== qId));
+  };
+
+  const startEditPktQ = (q) => {
+    setEditingPktQ({ ...q, options: [...(q.options || ["", "", "", "", ""])] });
+  };
+
+  const saveEditPktQ = () => {
+    if (!editingPktQ.question || !editingPktQ.topic) return alert("Isi soal dan topik!");
+    const pkt = getPacket();
+    updatePacketQuestions(pkt.questions.map((q) => q.id === editingPktQ.id ? { ...editingPktQ } : q));
+    setEditingPktQ(null);
   };
 
   // ---- Import from Bank Soal ----
@@ -1271,6 +1283,7 @@ function TryOut() {
                       </div>
                       <p className="text-sm truncate">{q.question}</p>
                     </div>
+                    <button onClick={() => startEditPktQ(q)} className="text-xs text-blue-500 hover:text-blue-700 mt-1 flex-shrink-0 px-1.5 py-0.5 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20" title="Edit soal">✏️</button>
                     <button onClick={() => removeQFromPacket(q.id)} className="text-xs text-red-500 hover:text-red-700 mt-1 flex-shrink-0">✕</button>
                   </div>
                 );
@@ -1278,6 +1291,72 @@ function TryOut() {
             </div>
           )}
         </Card>
+
+        {/* Edit Modal for Packet Questions */}
+        {editingPktQ && (
+          <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setEditingPktQ(null)}>
+            <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-bold text-lg">✏️ Edit Soal Paket</h3>
+                <button onClick={() => setEditingPktQ(null)} className="text-slate-400 hover:text-slate-600 text-xl">✕</button>
+              </div>
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div>
+                    <label className="text-xs text-slate-500">Mapel</label>
+                    <select value={editingPktQ.subject} onChange={(e) => setEditingPktQ({ ...editingPktQ, subject: e.target.value })}
+                      className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm">
+                      {SUBJECTS.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500">Topik</label>
+                    <input type="text" value={editingPktQ.topic} onChange={(e) => setEditingPktQ({ ...editingPktQ, topic: e.target.value })}
+                      className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500">Subtopik</label>
+                    <input type="text" value={editingPktQ.subtopic} onChange={(e) => setEditingPktQ({ ...editingPktQ, subtopic: e.target.value })}
+                      className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500">Kesulitan</label>
+                    <select value={editingPktQ.difficulty} onChange={(e) => setEditingPktQ({ ...editingPktQ, difficulty: e.target.value })}
+                      className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm">
+                      {DIFFICULTY.map((d) => <option key={d} value={d}>{d}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500">Soal</label>
+                  <textarea value={editingPktQ.question} onChange={(e) => setEditingPktQ({ ...editingPktQ, question: e.target.value })} rows={3}
+                    className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm" />
+                </div>
+                <ImageUploadButton value={editingPktQ.image} onChange={(v) => setEditingPktQ({ ...editingPktQ, image: v })} label="Gambar Soal (opsional)" />
+                {editingPktQ.options.map((opt, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <input type="radio" name="editpkt_correct" checked={editingPktQ.correctAnswer === i} onChange={() => setEditingPktQ({ ...editingPktQ, correctAnswer: i })} />
+                    <span className={cn("text-xs font-bold w-5", editingPktQ.correctAnswer === i ? "text-green-600" : "")}>{String.fromCharCode(65 + i)}</span>
+                    <input type="text" value={opt} onChange={(e) => { const opts = [...editingPktQ.options]; opts[i] = e.target.value; setEditingPktQ({ ...editingPktQ, options: opts }); }}
+                      className={cn("flex-1 px-3 py-2 rounded-lg border bg-white dark:bg-slate-800 text-sm",
+                        editingPktQ.correctAnswer === i ? "border-green-400 dark:border-green-600" : "border-slate-300 dark:border-slate-600")} />
+                    {editingPktQ.correctAnswer === i && <span className="text-xs text-green-600 font-medium">✓ Benar</span>}
+                  </div>
+                ))}
+                <div>
+                  <label className="text-xs text-slate-500">Pembahasan</label>
+                  <textarea value={editingPktQ.explanation} onChange={(e) => setEditingPktQ({ ...editingPktQ, explanation: e.target.value })} rows={2}
+                    className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm" />
+                </div>
+                <ImageUploadButton value={editingPktQ.explanationImage} onChange={(v) => setEditingPktQ({ ...editingPktQ, explanationImage: v })} label="Gambar Pembahasan (opsional)" />
+                <div className="flex gap-2 pt-2">
+                  <button onClick={saveEditPktQ} className="px-4 py-2 bg-[#0033A0] text-white rounded-lg text-sm font-medium">💾 Simpan Perubahan</button>
+                  <button onClick={() => setEditingPktQ(null)} className="px-4 py-2 bg-slate-200 dark:bg-slate-700 rounded-lg text-sm font-medium">Batal</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -2077,6 +2156,7 @@ function QuestionBank() {
   const [filterDiff, setFilterDiff] = useState("");
   const [selected, setSelected] = useState(new Set());
   const [showAdd, setShowAdd] = useState(false);
+  const [editingQ, setEditingQ] = useState(null); // null or question object being edited
   const [newQ, setNewQ] = useState({
     subject: "biologi", topic: "", subtopic: "", difficulty: "sedang",
     question: "", options: ["", "", "", "", ""], correctAnswer: 0, explanation: "", tags: [],
@@ -2132,6 +2212,17 @@ function QuestionBank() {
     }]);
     setNewQ({ subject: "biologi", topic: "", subtopic: "", difficulty: "sedang", question: "", options: ["", "", "", "", ""], correctAnswer: 0, explanation: "", tags: [], image: "", explanationImage: "" });
     setShowAdd(false);
+  };
+
+  const startEdit = (q) => {
+    setEditingQ({ ...q, options: [...(q.options || ["", "", "", "", ""])] });
+    setShowAdd(false);
+  };
+
+  const saveEdit = () => {
+    if (!editingQ.question || !editingQ.topic) return alert("Isi soal dan topik!");
+    setQuestions((prev) => prev.map((q) => q.id === editingQ.id ? { ...editingQ, tags: [editingQ.subject, editingQ.topic, editingQ.subtopic, editingQ.difficulty].filter(Boolean) } : q));
+    setEditingQ(null);
   };
 
   const fileInputRef = useRef(null);
@@ -2313,6 +2404,72 @@ function QuestionBank() {
         </Card>
       )}
 
+      {/* Edit Modal */}
+      {editingQ && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setEditingQ(null)}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-lg">✏️ Edit Soal</h3>
+              <button onClick={() => setEditingQ(null)} className="text-slate-400 hover:text-slate-600 text-xl">✕</button>
+            </div>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div>
+                  <label className="text-xs text-slate-500">Mapel</label>
+                  <select value={editingQ.subject} onChange={(e) => setEditingQ({ ...editingQ, subject: e.target.value })}
+                    className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm">
+                    {SUBJECTS.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500">Topik</label>
+                  <input type="text" value={editingQ.topic} onChange={(e) => setEditingQ({ ...editingQ, topic: e.target.value })}
+                    className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500">Subtopik</label>
+                  <input type="text" value={editingQ.subtopic} onChange={(e) => setEditingQ({ ...editingQ, subtopic: e.target.value })}
+                    className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500">Kesulitan</label>
+                  <select value={editingQ.difficulty} onChange={(e) => setEditingQ({ ...editingQ, difficulty: e.target.value })}
+                    className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm">
+                    {DIFFICULTY.map((d) => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-slate-500">Soal</label>
+                <textarea value={editingQ.question} onChange={(e) => setEditingQ({ ...editingQ, question: e.target.value })} rows={3}
+                  className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm" />
+              </div>
+              <ImageUploadButton value={editingQ.image} onChange={(v) => setEditingQ({ ...editingQ, image: v })} label="Gambar Soal (opsional)" />
+              {editingQ.options.map((opt, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input type="radio" name="edit_correct" checked={editingQ.correctAnswer === i} onChange={() => setEditingQ({ ...editingQ, correctAnswer: i })} />
+                  <span className={cn("text-xs font-bold w-5", editingQ.correctAnswer === i ? "text-green-600" : "")}>{String.fromCharCode(65 + i)}</span>
+                  <input type="text" value={opt} onChange={(e) => { const opts = [...editingQ.options]; opts[i] = e.target.value; setEditingQ({ ...editingQ, options: opts }); }}
+                    className={cn("flex-1 px-3 py-2 rounded-lg border bg-white dark:bg-slate-800 text-sm",
+                      editingQ.correctAnswer === i ? "border-green-400 dark:border-green-600" : "border-slate-300 dark:border-slate-600")} />
+                  {editingQ.correctAnswer === i && <span className="text-xs text-green-600 font-medium">✓ Benar</span>}
+                </div>
+              ))}
+              <div>
+                <label className="text-xs text-slate-500">Pembahasan</label>
+                <textarea value={editingQ.explanation} onChange={(e) => setEditingQ({ ...editingQ, explanation: e.target.value })} rows={2}
+                  className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm" />
+              </div>
+              <ImageUploadButton value={editingQ.explanationImage} onChange={(v) => setEditingQ({ ...editingQ, explanationImage: v })} label="Gambar Pembahasan (opsional)" />
+              <div className="flex gap-2 pt-2">
+                <button onClick={saveEdit} className="px-4 py-2 bg-[#0033A0] text-white rounded-lg text-sm font-medium">💾 Simpan Perubahan</button>
+                <button onClick={() => setEditingQ(null)} className="px-4 py-2 bg-slate-200 dark:bg-slate-700 rounded-lg text-sm font-medium">Batal</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Question List */}
       <Card>
         <div className="flex items-center gap-2 mb-3">
@@ -2334,6 +2491,7 @@ function QuestionBank() {
                   </div>
                   <p className="text-sm truncate">{q.question}</p>
                 </div>
+                <button onClick={() => startEdit(q)} className="text-xs text-blue-500 hover:text-blue-700 mt-1 flex-shrink-0 px-1.5 py-0.5 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20" title="Edit soal">✏️</button>
               </div>
             );
           })}
