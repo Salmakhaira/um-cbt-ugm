@@ -234,6 +234,115 @@ function ImageUploadButton({ value, onChange, label }) {
   );
 }
 
+// ==================== GOOGLE SHEETS INTEGRATION ====================
+const SHEET_CONFIG = {
+  // GANTI URL INI dengan URL Google Sheets kamu yang sudah di-publish sebagai CSV
+  // Cara: Google Sheets → File → Share → Publish to web → Sheet → CSV → Publish → Copy link
+  bankSoal: "https://docs.google.com/spreadsheets/d/e/2PACX-1vTUNvhkQ3dlSTTBoJo3ms6COHRRkDmYnTCsJLarmSOYldG9Z6l_4FPvaUEnkom0hHl6YQLEwi3u7vWR/pub?gid=0&single=true&output=csv", 
+  paketTO: "https://docs.google.com/spreadsheets/d/e/2PACX-1vTUNvhkQ3dlSTTBoJo3ms6COHRRkDmYnTCsJLarmSOYldG9Z6l_4FPvaUEnkom0hHl6YQLEwi3u7vWR/pub?gid=370478815&single=true&output=csv", 
+};
+
+function parseCSVLine(line) {
+  const result = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+      else inQuotes = !inQuotes;
+    } else if (ch === ',' && !inQuotes) {
+      result.push(current.trim());
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  result.push(current.trim());
+  return result;
+}
+
+function parseCSV(text) {
+  const lines = text.split('\n').filter((l) => l.trim());
+  if (lines.length < 2) return [];
+  const headers = parseCSVLine(lines[0]).map((h) => h.toLowerCase().replace(/\s+/g, '_'));
+  return lines.slice(1).map((line) => {
+    const vals = parseCSVLine(line);
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = vals[i] || ""; });
+    return obj;
+  });
+}
+
+function sheetRowToQuestion(row, index) {
+  // Flexible column mapping — supports Indonesian and English column names
+  const optionsRaw = row.options || row.pilihan || row.opsi || "";
+  let options;
+  try { options = JSON.parse(optionsRaw); } catch {
+    options = optionsRaw.includes("|") ? optionsRaw.split("|").map((o) => o.trim())
+      : optionsRaw.includes(";") ? optionsRaw.split(";").map((o) => o.trim())
+      : ["A", "B", "C", "D", "E"];
+  }
+
+  const correctRaw = row.correctanswer ?? row.correct_answer ?? row.jawaban ?? row.jawaban_benar ?? row.correct ?? "0";
+  let correctAnswer = parseInt(correctRaw);
+  // Support letter answers: A=0, B=1, etc
+  if (isNaN(correctAnswer) && typeof correctRaw === "string" && correctRaw.match(/^[A-Ea-e]$/)) {
+    correctAnswer = correctRaw.toUpperCase().charCodeAt(0) - 65;
+  }
+  if (isNaN(correctAnswer)) correctAnswer = 0;
+
+  return {
+    id: row.id || `sheet_${Date.now()}_${index}`,
+    subject: (row.subject || row.mapel || "biologi").toLowerCase().trim(),
+    topic: row.topic || row.topik || "Umum",
+    subtopic: row.subtopic || row.subtopik || "Umum",
+    difficulty: (row.difficulty || row.kesulitan || "sedang").toLowerCase().trim(),
+    question: row.question || row.soal || row.pertanyaan || "",
+    options,
+    correctAnswer,
+    explanation: row.explanation || row.penjelasan || row.pembahasan || "",
+    image: row.image || row.gambar || row.gambar_soal || "",
+    explanationImage: row.explanationimage || row.explanation_image || row.gambar_pembahasan || "",
+    tags: [row.subject || "biologi", row.topic || "Umum"].filter(Boolean),
+    _fromSheet: true,
+  };
+}
+
+function sheetRowsToPackets(rows) {
+  // Group rows by packet_name/paket column
+  const groups = {};
+  rows.forEach((row, i) => {
+    const packetName = row.packet || row.paket || row.packet_name || row.nama_paket || "Paket Import";
+    if (!groups[packetName]) {
+      groups[packetName] = {
+        id: `sheetpkt_${packetName.replace(/\s/g, '_')}_${Date.now()}`,
+        name: packetName,
+        description: row.packet_description || row.deskripsi_paket || "",
+        questions: [],
+        createdAt: new Date().toISOString(),
+        _fromSheet: true,
+      };
+    }
+    const q = sheetRowToQuestion(row, i);
+    if (q.question.trim()) groups[packetName].questions.push(q);
+  });
+  return Object.values(groups);
+}
+
+async function fetchSheetData(url) {
+  if (!url || !url.startsWith("http")) return null;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    return parseCSV(text);
+  } catch (err) {
+    console.error("Failed to fetch Google Sheet:", err);
+    return null;
+  }
+}
+
 // ==================== MAIN APP ====================
 export default function App() {
   const [darkMode, setDarkMode] = useLocalStorage("ugm_dark", false);
@@ -251,6 +360,64 @@ export default function App() {
   const [goals, setGoals] = useLocalStorage("ugm_goals", { score: 780, accuracy: 80, timePerQ: 90, days: 90 });
   const [userName, setUserName] = useLocalStorage("ugm_username", "Peserta");
   const [mobileNav, setMobileNav] = useState(false);
+  const [sheetLoading, setSheetLoading] = useState(false);
+  const [sheetStatus, setSheetStatus] = useState("");
+
+  // Sync from Google Sheets
+  const syncFromSheets = async (silent = false) => {
+    if (!SHEET_CONFIG.bankSoal && !SHEET_CONFIG.paketTO) {
+      if (!silent) setSheetStatus("⚠️ URL Google Sheets belum diisi di kode (SHEET_CONFIG)");
+      return;
+    }
+    setSheetLoading(true);
+    setSheetStatus("🔄 Mengambil data dari Google Sheets...");
+    let totalQ = 0, totalPkt = 0;
+
+    try {
+      // Fetch Bank Soal
+      if (SHEET_CONFIG.bankSoal) {
+        const rows = await fetchSheetData(SHEET_CONFIG.bankSoal);
+        if (rows && rows.length > 0) {
+          const sheetQs = rows.map((r, i) => sheetRowToQuestion(r, i)).filter((q) => q.question.trim());
+          if (sheetQs.length > 0) {
+            // Replace all sheet questions, keep user-added ones
+            setQuestions((prev) => {
+              const userAdded = prev.filter((q) => !q._fromSheet);
+              return [...sheetQs, ...userAdded];
+            });
+            totalQ = sheetQs.length;
+          }
+        }
+      }
+
+      // Fetch Paket TO
+      if (SHEET_CONFIG.paketTO) {
+        const rows = await fetchSheetData(SHEET_CONFIG.paketTO);
+        if (rows && rows.length > 0) {
+          const sheetPkts = sheetRowsToPackets(rows);
+          if (sheetPkts.length > 0) {
+            setToPackets((prev) => {
+              const userAdded = prev.filter((p) => !p._fromSheet);
+              return [...sheetPkts, ...userAdded];
+            });
+            totalPkt = sheetPkts.length;
+          }
+        }
+      }
+
+      setSheetStatus(`✅ Sync selesai! ${totalQ} soal bank, ${totalPkt} paket TO dari Google Sheets`);
+    } catch (err) {
+      setSheetStatus(`❌ Gagal sync: ${err.message}`);
+    }
+    setSheetLoading(false);
+  };
+
+  // Auto-sync on first load (if URLs are set)
+  useEffect(() => {
+    if (SHEET_CONFIG.bankSoal || SHEET_CONFIG.paketTO) {
+      syncFromSheets(true);
+    }
+  }, []);
 
   // Streak tracking
   useEffect(() => {
@@ -296,6 +463,7 @@ export default function App() {
     srQueue, setSrQueue, srDueToday, notes, setNotes,
     calendar, setCalendar, streak, setStreak, goals, setGoals,
     userName, setUserName,
+    syncFromSheets, sheetLoading, sheetStatus,
   };
 
   const exportData = () => {
@@ -2504,11 +2672,41 @@ function QuestionBank() {
 
 // ==================== SETTINGS ====================
 function Settings({ exportData, importData }) {
-  const { darkMode, setDarkMode, fontSize, setFontSize, userName, setUserName, goals, setGoals, questions } = useApp();
+  const { darkMode, setDarkMode, fontSize, setFontSize, userName, setUserName, goals, setGoals, questions, syncFromSheets, sheetLoading, sheetStatus } = useApp();
 
   return (
     <div className="space-y-4 animate-in">
       <h1 className="text-2xl font-bold">⚙️ Pengaturan</h1>
+
+      <Card title="📊 Google Sheets Sync">
+        <div className="space-y-3">
+          <p className="text-sm text-slate-500">
+            Soal diambil otomatis dari Google Sheets saat halaman dibuka. Klik tombol di bawah untuk sync manual.
+          </p>
+          <div className="flex items-center gap-3">
+            <button onClick={() => syncFromSheets(false)} disabled={sheetLoading}
+              className={cn("px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium flex items-center gap-2", sheetLoading && "opacity-60")}>
+              {sheetLoading ? "⏳ Syncing..." : "🔄 Sync dari Google Sheets"}
+            </button>
+            {!SHEET_CONFIG.bankSoal && !SHEET_CONFIG.paketTO && (
+              <span className="text-xs text-amber-600">⚠️ URL belum diisi di SHEET_CONFIG</span>
+            )}
+          </div>
+          {sheetStatus && <p className="text-sm">{sheetStatus}</p>}
+          <details className="text-xs text-slate-400">
+            <summary className="cursor-pointer hover:text-slate-600">📖 Cara setup Google Sheets</summary>
+            <div className="mt-2 space-y-1 pl-2 border-l-2 border-slate-200 dark:border-slate-700">
+              <p>1. Buat Google Spreadsheet baru</p>
+              <p>2. Baris pertama = header kolom: <code>subject, topic, subtopic, difficulty, question, options, correctAnswer, explanation, image, explanationImage</code></p>
+              <p>3. Kolom <code>options</code> isi dengan format: <code>Opsi A|Opsi B|Opsi C|Opsi D|Opsi E</code> (pisah pakai |)</p>
+              <p>4. Kolom <code>correctAnswer</code> isi angka 0-4 (0=A, 1=B, dst) atau huruf A-E</p>
+              <p>5. File → Share → Publish to web → pilih sheet → CSV → Publish</p>
+              <p>6. Copy URL, paste di <code>SHEET_CONFIG.bankSoal</code> di kode App.js</p>
+              <p>7. Untuk Paket TO, tambah kolom <code>packet</code> (nama paket) di sheet ke-2, lalu paste URL di <code>SHEET_CONFIG.paketTO</code></p>
+            </div>
+          </details>
+        </div>
+      </Card>
 
       <Card title="👤 Profil">
         <div>
