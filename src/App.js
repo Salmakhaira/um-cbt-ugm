@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext, lazy, Suspense } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, BarChart, Bar, Cell } from "recharts";
 import katex from "katex";
+import { initializeApp } from "firebase/app";
+import { getFirestore, collection, doc, getDocs, addDoc, updateDoc, deleteDoc, writeBatch, onSnapshot } from "firebase/firestore";
 
 // ==================== CONSTANTS ====================
 const SUBJECTS = [
@@ -235,8 +237,6 @@ function ImageUploadButton({ value, onChange, label }) {
 }
 
 // ==================== FIREBASE INTEGRATION ====================
-import { initializeApp } from "firebase/app";
-import { getFirestore, collection, doc, getDocs, addDoc, updateDoc, deleteDoc, writeBatch, onSnapshot } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBcrHooJCzF36P48Z-nOl837gclLG52wzU",
