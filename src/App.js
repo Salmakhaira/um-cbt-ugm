@@ -999,18 +999,18 @@ function TryOut() {
   };
 
   // ---- Add question to packet manually ----
-  const addQToPacket = () => {
+  const addQToPacket = async () => {
     if (!newQ.question || !newQ.topic) return alert("Isi soal dan topik!");
     const q = { ...newQ, id: `toq_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`, tags: [newQ.subject, newQ.topic, newQ.difficulty].filter(Boolean) };
     const pkt = getPacket();
-    updatePacketQuestions([...(pkt?.questions || []), q]);
+    await updatePacketQuestions([...(pkt?.questions || []), q]);
     setNewQ({ subject: "biologi", topic: "", subtopic: "", difficulty: "sedang", question: "", options: ["", "", "", "", ""], correctAnswer: 0, explanation: "", image: "", explanationImage: "" });
     setShowAddQ(false);
   };
 
-  const removeQFromPacket = (qId) => {
+  const removeQFromPacket = async (qId) => {
     const pkt = getPacket();
-    updatePacketQuestions(pkt.questions.filter((q) => q.id !== qId));
+    await updatePacketQuestions(pkt.questions.filter((q) => q.id !== qId));
   };
 
   const startEditPktQ = (q) => {
@@ -1025,12 +1025,12 @@ function TryOut() {
   };
 
   // ---- Import from Bank Soal ----
-  const addFromBank = () => {
+  const addFromBank = async () => {
     if (bankSelected.size === 0) return;
     const pkt = getPacket();
     const existingIds = new Set(pkt.questions.map((q) => q.id));
     const toAdd = questions.filter((q) => bankSelected.has(q.id) && !existingIds.has(q.id));
-    updatePacketQuestions([...pkt.questions, ...toAdd]);
+    await updatePacketQuestions([...pkt.questions, ...toAdd]);
     setBankSelected(new Set());
     setShowBankPicker(false);
     alert(`${toAdd.length} soal ditambahkan ke paket!`);
@@ -1041,10 +1041,9 @@ function TryOut() {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       try {
         const data = JSON.parse(ev.target.result);
-        // Support: { name, questions: [...] } or [{ name, questions }] or just [questions]
         const packets = Array.isArray(data) ? (data[0]?.questions ? data : [{ name: `Paket Import ${new Date().toLocaleDateString("id")}`, questions: data }]) : [data];
         let totalAdded = 0;
         const newPackets = packets.map((pkt) => {
