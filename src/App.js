@@ -238,14 +238,6 @@ function ImageUploadButton({ value, onChange, label }) {
   );
 }
 
-// ==================== GOOGLE SHEETS INTEGRATION ====================
-const SHEET_CONFIG = {
-  // GANTI URL INI dengan URL Google Sheets kamu yang sudah di-publish sebagai CSV
-  // Cara: Google Sheets → File → Share → Publish to web → Sheet → CSV → Publish → Copy link
-  bankSoal: "", // URL CSV untuk Bank Soal (Sheet 1)
-  paketTO: "",  // URL CSV untuk Paket TO (Sheet 2) — opsional
-};
-
 function parseCSVLine(line) {
   const result = [];
   let current = "";
