@@ -2,6 +2,10 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, createContext
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, BarChart, Bar, Cell } from "recharts";
 import katex from "katex";
 
+const SHEET_CONFIG = {
+  bankSoal: "https://docs.google.com/spreadsheets/d/e/2PACX-1vTUNvhkQ3dlSTTBoJo3ms6COHRRkDmYnTCsJLarmSOYldG9Z6l_4FPvaUEnkom0hHl6YQLEwi3u7vWR/pub?gid=0&single=true&output=csv",
+  paketTO: "https://docs.google.com/spreadsheets/d/e/2PACX-1vTUNvhkQ3dlSTTBoJo3ms6COHRRkDmYnTCsJLarmSOYldG9Z6l_4FPvaUEnkom0hHl6YQLEwi3u7vWR/pub?gid=370478815&single=true&output=csv",
+};
 // ==================== CONSTANTS ====================
 const SUBJECTS = [
   { id: "biologi", name: "Biologi", icon: "🧬", color: "#22c55e" },
@@ -238,8 +242,8 @@ function ImageUploadButton({ value, onChange, label }) {
 const SHEET_CONFIG = {
   // GANTI URL INI dengan URL Google Sheets kamu yang sudah di-publish sebagai CSV
   // Cara: Google Sheets → File → Share → Publish to web → Sheet → CSV → Publish → Copy link
-  bankSoal: "https://docs.google.com/spreadsheets/d/e/2PACX-1vTUNvhkQ3dlSTTBoJo3ms6COHRRkDmYnTCsJLarmSOYldG9Z6l_4FPvaUEnkom0hHl6YQLEwi3u7vWR/pub?gid=0&single=true&output=csv", 
-  paketTO: "https://docs.google.com/spreadsheets/d/e/2PACX-1vTUNvhkQ3dlSTTBoJo3ms6COHRRkDmYnTCsJLarmSOYldG9Z6l_4FPvaUEnkom0hHl6YQLEwi3u7vWR/pub?gid=370478815&single=true&output=csv", 
+  bankSoal: "", // URL CSV untuk Bank Soal (Sheet 1)
+  paketTO: "",  // URL CSV untuk Paket TO (Sheet 2) — opsional
 };
 
 function parseCSVLine(line) {
