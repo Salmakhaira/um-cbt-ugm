@@ -1028,8 +1028,8 @@ function TryOut() {
   const addFromBank = async () => {
     if (bankSelected.size === 0) return;
     const pkt = getPacket();
-    const existingIds = new Set(pkt.questions.map((q) => q.id));
-    const toAdd = questions.filter((q) => bankSelected.has(q.id) && !existingIds.has(q.id));
+    const existingIds = new Set(pkt.questions.map((q) => q._firebaseId || q.id));
+    const toAdd = questions.filter((q) => bankSelected.has(q._firebaseId || q.id) && !existingIds.has(q._firebaseId || q.id));
     await updatePacketQuestions([...pkt.questions, ...toAdd]);
     setBankSelected(new Set());
     setShowBankPicker(false);
@@ -1347,11 +1347,12 @@ function TryOut() {
             <div className="max-h-60 overflow-y-auto space-y-1">
               {bankQuestions.slice(0, 200).map((q) => {
                 const sub = SUBJECTS.find((s) => s.id === q.subject);
-                const alreadyIn = pkt.questions.some((pq) => pq.id === q.id);
+                const qKey = q._firebaseId || q.id;
+                const alreadyIn = pkt.questions.some((pq) => (pq._firebaseId || pq.id) === qKey);
                 return (
-                  <label key={q.id} className={cn("flex items-start gap-2 p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer text-sm", alreadyIn && "opacity-40")}>
-                    <input type="checkbox" disabled={alreadyIn} checked={bankSelected.has(q.id)} onChange={() => {
-                      setBankSelected((prev) => { const n = new Set(prev); n.has(q.id) ? n.delete(q.id) : n.add(q.id); return n; });
+                  <label key={qKey} className={cn("flex items-start gap-2 p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer text-sm", alreadyIn && "opacity-40")}>
+                    <input type="checkbox" disabled={alreadyIn} checked={bankSelected.has(qKey)} onChange={() => {
+                      setBankSelected((prev) => { const n = new Set(prev); n.has(qKey) ? n.delete(qKey) : n.add(qKey); return n; });
                     }} className="mt-0.5" />
                     <span className="text-xs" style={{ color: sub?.color }}>{sub?.icon}</span>
                     <span className="flex-1 truncate">{q.question}</span>
