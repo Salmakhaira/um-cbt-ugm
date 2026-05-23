@@ -2,10 +2,6 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, createContext
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, BarChart, Bar, Cell } from "recharts";
 import katex from "katex";
 
-const SHEET_CONFIG = {
-  bankSoal: "https://docs.google.com/spreadsheets/d/e/2PACX-1vTUNvhkQ3dlSTTBoJo3ms6COHRRkDmYnTCsJLarmSOYldG9Z6l_4FPvaUEnkom0hHl6YQLEwi3u7vWR/pub?gid=0&single=true&output=csv",
-  paketTO: "https://docs.google.com/spreadsheets/d/e/2PACX-1vTUNvhkQ3dlSTTBoJo3ms6COHRRkDmYnTCsJLarmSOYldG9Z6l_4FPvaUEnkom0hHl6YQLEwi3u7vWR/pub?gid=370478815&single=true&output=csv",
-};
 // ==================== CONSTANTS ====================
 const SUBJECTS = [
   { id: "biologi", name: "Biologi", icon: "🧬", color: "#22c55e" },
@@ -238,105 +234,128 @@ function ImageUploadButton({ value, onChange, label }) {
   );
 }
 
-function parseCSVLine(line) {
-  const result = [];
-  let current = "";
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') {
-      if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
-      else inQuotes = !inQuotes;
-    } else if (ch === ',' && !inQuotes) {
-      result.push(current.trim());
-      current = "";
-    } else {
-      current += ch;
-    }
-  }
-  result.push(current.trim());
-  return result;
+// ==================== FIREBASE INTEGRATION ====================
+import { initializeApp } from "firebase/app";
+import { getFirestore, collection, doc, getDocs, addDoc, updateDoc, deleteDoc, writeBatch, onSnapshot } from "firebase/firestore";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBcrHooJCzF36P48Z-nOl837gclLG52wzU",
+  authDomain: "um-cbt-ugm.firebaseapp.com",
+  projectId: "um-cbt-ugm",
+  storageBucket: "um-cbt-ugm.firebasestorage.app",
+  messagingSenderId: "240560691764",
+  appId: "1:240560691764:web:76d5a44b825aedb89a4861"
+};
+
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp);
+
+// Firestore collections
+const questionsCol = collection(db, "questions");
+const packetsCol = collection(db, "packets");
+
+// Helper: convert Firestore doc to object
+function docToObj(docSnap) {
+  return { ...docSnap.data(), _firebaseId: docSnap.id };
 }
 
-function parseCSV(text) {
-  const lines = text.split('\n').filter((l) => l.trim());
-  if (lines.length < 2) return [];
-  const headers = parseCSVLine(lines[0]).map((h) => h.toLowerCase().replace(/\s+/g, '_'));
-  return lines.slice(1).map((line) => {
-    const vals = parseCSVLine(line);
-    const obj = {};
-    headers.forEach((h, i) => { obj[h] = vals[i] || ""; });
-    return obj;
-  });
-}
+// ==================== FIREBASE HOOKS ====================
+function useFirestoreQuestions() {
+  const [questions, setQuestions] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-function sheetRowToQuestion(row, index) {
-  // Flexible column mapping — supports Indonesian and English column names
-  const optionsRaw = row.options || row.pilihan || row.opsi || "";
-  let options;
-  try { options = JSON.parse(optionsRaw); } catch {
-    options = optionsRaw.includes("|") ? optionsRaw.split("|").map((o) => o.trim())
-      : optionsRaw.includes(";") ? optionsRaw.split(";").map((o) => o.trim())
-      : ["A", "B", "C", "D", "E"];
-  }
+  useEffect(() => {
+    const unsub = onSnapshot(questionsCol, (snapshot) => {
+      const qs = snapshot.docs.map(docToObj);
+      setQuestions(qs);
+      setLoading(false);
+    }, (err) => {
+      console.error("Firestore questions error:", err);
+      setLoading(false);
+    });
+    return unsub;
+  }, []);
 
-  const correctRaw = row.correctanswer ?? row.correct_answer ?? row.jawaban ?? row.jawaban_benar ?? row.correct ?? "0";
-  let correctAnswer = parseInt(correctRaw);
-  // Support letter answers: A=0, B=1, etc
-  if (isNaN(correctAnswer) && typeof correctRaw === "string" && correctRaw.match(/^[A-Ea-e]$/)) {
-    correctAnswer = correctRaw.toUpperCase().charCodeAt(0) - 65;
-  }
-  if (isNaN(correctAnswer)) correctAnswer = 0;
-
-  return {
-    id: row.id || `sheet_${Date.now()}_${index}`,
-    subject: (row.subject || row.mapel || "biologi").toLowerCase().trim(),
-    topic: row.topic || row.topik || "Umum",
-    subtopic: row.subtopic || row.subtopik || "Umum",
-    difficulty: (row.difficulty || row.kesulitan || "sedang").toLowerCase().trim(),
-    question: row.question || row.soal || row.pertanyaan || "",
-    options,
-    correctAnswer,
-    explanation: row.explanation || row.penjelasan || row.pembahasan || "",
-    image: row.image || row.gambar || row.gambar_soal || "",
-    explanationImage: row.explanationimage || row.explanation_image || row.gambar_pembahasan || "",
-    tags: [row.subject || "biologi", row.topic || "Umum"].filter(Boolean),
-    _fromSheet: true,
+  const addQuestion = async (q) => {
+    const { _firebaseId, ...data } = q;
+    const docRef = await addDoc(questionsCol, { ...data, createdAt: new Date().toISOString() });
+    return docRef.id;
   };
+
+  const updateQuestion = async (q) => {
+    if (!q._firebaseId) return;
+    const { _firebaseId, ...data } = q;
+    await updateDoc(doc(db, "questions", _firebaseId), data);
+  };
+
+  const deleteQuestion = async (firebaseId) => {
+    if (!firebaseId) return;
+    await deleteDoc(doc(db, "questions", firebaseId));
+  };
+
+  const deleteQuestions = async (firebaseIds) => {
+    const batch = writeBatch(db);
+    firebaseIds.forEach((id) => { if (id) batch.delete(doc(db, "questions", id)); });
+    await batch.commit();
+  };
+
+  const importQuestions = async (qs) => {
+    const batch = writeBatch(db);
+    qs.forEach((q) => {
+      const { _firebaseId, ...data } = q;
+      const ref = doc(questionsCol);
+      batch.set(ref, { ...data, createdAt: new Date().toISOString() });
+    });
+    await batch.commit();
+  };
+
+  return { questions, loading, addQuestion, updateQuestion, deleteQuestion, deleteQuestions, importQuestions, setQuestions };
 }
 
-function sheetRowsToPackets(rows) {
-  // Group rows by packet_name/paket column
-  const groups = {};
-  rows.forEach((row, i) => {
-    const packetName = row.packet || row.paket || row.packet_name || row.nama_paket || "Paket Import";
-    if (!groups[packetName]) {
-      groups[packetName] = {
-        id: `sheetpkt_${packetName.replace(/\s/g, '_')}_${Date.now()}`,
-        name: packetName,
-        description: row.packet_description || row.deskripsi_paket || "",
-        questions: [],
-        createdAt: new Date().toISOString(),
-        _fromSheet: true,
-      };
-    }
-    const q = sheetRowToQuestion(row, i);
-    if (q.question.trim()) groups[packetName].questions.push(q);
-  });
-  return Object.values(groups);
-}
+function useFirestorePackets() {
+  const [toPackets, setToPackets] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-async function fetchSheetData(url) {
-  if (!url || !url.startsWith("http")) return null;
-  try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const text = await res.text();
-    return parseCSV(text);
-  } catch (err) {
-    console.error("Failed to fetch Google Sheet:", err);
-    return null;
-  }
+  useEffect(() => {
+    const unsub = onSnapshot(packetsCol, (snapshot) => {
+      const pkts = snapshot.docs.map(docToObj);
+      setToPackets(pkts);
+      setLoading(false);
+    }, (err) => {
+      console.error("Firestore packets error:", err);
+      setLoading(false);
+    });
+    return unsub;
+  }, []);
+
+  const addPacket = async (pkt) => {
+    const { _firebaseId, ...data } = pkt;
+    const docRef = await addDoc(packetsCol, { ...data, createdAt: new Date().toISOString() });
+    return docRef.id;
+  };
+
+  const updatePacket = async (pkt) => {
+    if (!pkt._firebaseId) return;
+    const { _firebaseId, ...data } = pkt;
+    await updateDoc(doc(db, "packets", _firebaseId), data);
+  };
+
+  const deletePacket = async (firebaseId) => {
+    if (!firebaseId) return;
+    await deleteDoc(doc(db, "packets", firebaseId));
+  };
+
+  const importPackets = async (pkts) => {
+    const batch = writeBatch(db);
+    pkts.forEach((pkt) => {
+      const { _firebaseId, ...data } = pkt;
+      const ref = doc(packetsCol);
+      batch.set(ref, { ...data, createdAt: new Date().toISOString() });
+    });
+    await batch.commit();
+  };
+
+  return { toPackets, loading, addPacket, updatePacket, deletePacket, importPackets, setToPackets };
 }
 
 // ==================== MAIN APP ====================
@@ -344,9 +363,16 @@ export default function App() {
   const [darkMode, setDarkMode] = useLocalStorage("ugm_dark", false);
   const [fontSize, setFontSize] = useLocalStorage("ugm_fontsize", "normal");
   const [page, setPage] = useState("dashboard");
-  const [questions, setQuestions] = useLocalStorage("ugm_questions", () => generateMockQuestions());
+
+  // Firebase: questions and packets (shared across all users)
+  const fireQ = useFirestoreQuestions();
+  const fireP = useFirestorePackets();
+  const questions = fireQ.questions;
+  const toPackets = fireP.toPackets;
+  const fbLoading = fireQ.loading || fireP.loading;
+
+  // Local-only state (per user)
   const [tryoutHistory, setTryoutHistory] = useLocalStorage("ugm_tryouts", []);
-  const [toPackets, setToPackets] = useLocalStorage("ugm_to_packets", []);
   const [practiceHistory, setPracticeHistory] = useLocalStorage("ugm_practice", []);
   const [bookmarks, setBookmarks] = useLocalStorage("ugm_bookmarks", []);
   const [srQueue, setSrQueue] = useLocalStorage("ugm_sr", []);
@@ -356,64 +382,6 @@ export default function App() {
   const [goals, setGoals] = useLocalStorage("ugm_goals", { score: 780, accuracy: 80, timePerQ: 90, days: 90 });
   const [userName, setUserName] = useLocalStorage("ugm_username", "Peserta");
   const [mobileNav, setMobileNav] = useState(false);
-  const [sheetLoading, setSheetLoading] = useState(false);
-  const [sheetStatus, setSheetStatus] = useState("");
-
-  // Sync from Google Sheets
-  const syncFromSheets = async (silent = false) => {
-    if (!SHEET_CONFIG.bankSoal && !SHEET_CONFIG.paketTO) {
-      if (!silent) setSheetStatus("⚠️ URL Google Sheets belum diisi di kode (SHEET_CONFIG)");
-      return;
-    }
-    setSheetLoading(true);
-    setSheetStatus("🔄 Mengambil data dari Google Sheets...");
-    let totalQ = 0, totalPkt = 0;
-
-    try {
-      // Fetch Bank Soal
-      if (SHEET_CONFIG.bankSoal) {
-        const rows = await fetchSheetData(SHEET_CONFIG.bankSoal);
-        if (rows && rows.length > 0) {
-          const sheetQs = rows.map((r, i) => sheetRowToQuestion(r, i)).filter((q) => q.question.trim());
-          if (sheetQs.length > 0) {
-            // Replace all sheet questions, keep user-added ones
-            setQuestions((prev) => {
-              const userAdded = prev.filter((q) => !q._fromSheet);
-              return [...sheetQs, ...userAdded];
-            });
-            totalQ = sheetQs.length;
-          }
-        }
-      }
-
-      // Fetch Paket TO
-      if (SHEET_CONFIG.paketTO) {
-        const rows = await fetchSheetData(SHEET_CONFIG.paketTO);
-        if (rows && rows.length > 0) {
-          const sheetPkts = sheetRowsToPackets(rows);
-          if (sheetPkts.length > 0) {
-            setToPackets((prev) => {
-              const userAdded = prev.filter((p) => !p._fromSheet);
-              return [...sheetPkts, ...userAdded];
-            });
-            totalPkt = sheetPkts.length;
-          }
-        }
-      }
-
-      setSheetStatus(`✅ Sync selesai! ${totalQ} soal bank, ${totalPkt} paket TO dari Google Sheets`);
-    } catch (err) {
-      setSheetStatus(`❌ Gagal sync: ${err.message}`);
-    }
-    setSheetLoading(false);
-  };
-
-  // Auto-sync on first load (if URLs are set)
-  useEffect(() => {
-    if (SHEET_CONFIG.bankSoal || SHEET_CONFIG.paketTO) {
-      syncFromSheets(true);
-    }
-  }, []);
 
   // Streak tracking
   useEffect(() => {
@@ -435,7 +403,7 @@ export default function App() {
         const backups = JSON.parse(localStorage.getItem("ugm_backups") || "[]");
         const backup = {
           date: new Date().toISOString(),
-          data: { questions, tryoutHistory, practiceHistory, bookmarks, srQueue, notes, calendar, goals, toPackets }
+          data: { tryoutHistory, practiceHistory, bookmarks, srQueue, notes, calendar, goals }
         };
         backups.unshift(backup);
         localStorage.setItem("ugm_backups", JSON.stringify(backups.slice(0, 5)));
@@ -453,13 +421,24 @@ export default function App() {
 
   const ctx = {
     darkMode, setDarkMode, fontSize, setFontSize, page, setPage,
-    questions, setQuestions, tryoutHistory, setTryoutHistory,
-    toPackets, setToPackets,
+    questions, toPackets, fbLoading,
+    // Firebase CRUD for questions
+    addQuestion: fireQ.addQuestion,
+    updateQuestion: fireQ.updateQuestion,
+    deleteQuestion: fireQ.deleteQuestion,
+    deleteQuestions: fireQ.deleteQuestions,
+    importQuestions: fireQ.importQuestions,
+    // Firebase CRUD for packets
+    addPacket: fireP.addPacket,
+    updatePacket: fireP.updatePacket,
+    deletePacketFB: fireP.deletePacket,
+    importPackets: fireP.importPackets,
+    // Local state
+    tryoutHistory, setTryoutHistory,
     practiceHistory, setPracticeHistory, bookmarks, setBookmarks,
     srQueue, setSrQueue, srDueToday, notes, setNotes,
     calendar, setCalendar, streak, setStreak, goals, setGoals,
     userName, setUserName,
-    syncFromSheets, sheetLoading, sheetStatus,
   };
 
   const exportData = () => {
@@ -475,10 +454,11 @@ export default function App() {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       try {
         const data = JSON.parse(ev.target.result);
-        if (data.questions) setQuestions(data.questions);
+        if (data.questions) await fireQ.importQuestions(data.questions);
+        if (data.toPackets) await fireP.importPackets(data.toPackets);
         if (data.tryoutHistory) setTryoutHistory(data.tryoutHistory);
         if (data.practiceHistory) setPracticeHistory(data.practiceHistory);
         if (data.bookmarks) setBookmarks(data.bookmarks);
@@ -486,9 +466,8 @@ export default function App() {
         if (data.notes) setNotes(data.notes);
         if (data.calendar) setCalendar(data.calendar);
         if (data.goals) setGoals(data.goals);
-        if (data.toPackets) setToPackets(data.toPackets);
         alert("Data berhasil diimpor!");
-      } catch { alert("Format file tidak valid!"); }
+      } catch (err) { alert("Format file tidak valid! " + err.message); }
     };
     reader.readAsText(file);
   };
@@ -523,6 +502,16 @@ export default function App() {
     <AppContext.Provider value={ctx}>
       <div className={cn(darkMode ? "dark" : "", fontClass)} style={{ fontFamily: "'Plus Jakarta Sans', 'Segoe UI', sans-serif" }}>
         <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors">
+          {/* Loading overlay */}
+          {fbLoading && (
+            <div className="fixed inset-0 z-[9999] bg-white dark:bg-slate-950 flex items-center justify-center">
+              <div className="text-center">
+                <div className="text-5xl mb-4 animate-bounce">📚</div>
+                <p className="text-lg font-semibold text-[#0033A0]">Memuat soal...</p>
+                <p className="text-sm text-slate-500 mt-1">Mengambil data dari Firebase</p>
+              </div>
+            </div>
+          )}
           {/* Skip link */}
           <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[9999] bg-blue-700 text-white px-4 py-2 rounded">
             Skip to main content
@@ -946,7 +935,7 @@ function Practice() {
 
 // ==================== TRY OUT MODE ====================
 function TryOut() {
-  const { questions, tryoutHistory, setTryoutHistory, toPackets, setToPackets, srQueue, setSrQueue } = useApp();
+  const { questions, tryoutHistory, setTryoutHistory, toPackets, addPacket: fbAddPkt, updatePacket: fbUpdatePkt, deletePacketFB, importPackets: fbImportPkts, srQueue, setSrQueue } = useApp();
   const [phase, setPhase] = useState("list"); // list, manage, exam, result
   const [activePacket, setActivePacket] = useState(null);
   const [examQuestions, setExamQuestions] = useState([]);
@@ -963,6 +952,7 @@ function TryOut() {
   const [editingPktQ, setEditingPktQ] = useState(null);
   const [bankSelected, setBankSelected] = useState(new Set());
   const [bankFilter, setBankFilter] = useState("");
+  const [saving, setSaving] = useState(false);
   const packetFileRef = useRef(null);
 
   const [newPacket, setNewPacket] = useState({ name: "", description: "" });
@@ -971,35 +961,41 @@ function TryOut() {
     question: "", options: ["", "", "", "", ""], correctAnswer: 0, explanation: "", image: "", explanationImage: "",
   });
 
-  const getDuration = (packet) => (packet?.questions?.length || 0) * 2 * 60; // jumlah soal x 2 menit, in seconds
+  const getDuration = (packet) => (packet?.questions?.length || 0) * 2 * 60;
   const timer = useTimer(7200, () => submitExam());
 
-  // ---- Packet CRUD ----
-  const createPacket = () => {
+  // ---- Packet CRUD (Firebase) ----
+  const createPacket = async () => {
     if (!newPacket.name.trim()) return alert("Nama paket harus diisi!");
-    const packet = {
-      id: `pkt_${Date.now()}`,
-      name: newPacket.name,
-      description: newPacket.description,
-      questions: [],
-      createdAt: new Date().toISOString(),
-    };
-    setToPackets((prev) => [...prev, packet]);
-    setNewPacket({ name: "", description: "" });
-    setShowCreateForm(false);
-    setActivePacket(packet.id);
-    setPhase("manage");
+    setSaving(true);
+    try {
+      const pktData = { name: newPacket.name, description: newPacket.description, questions: [] };
+      const docId = await fbAddPkt(pktData);
+      setNewPacket({ name: "", description: "" });
+      setShowCreateForm(false);
+      setActivePacket(docId);
+      setPhase("manage");
+    } catch (err) { alert("Gagal membuat paket: " + err.message); }
+    setSaving(false);
   };
 
-  const deletePacket = (id) => {
+  const deletePacket = async (firebaseId) => {
     if (!window.confirm("Hapus paket ini beserta semua soalnya?")) return;
-    setToPackets((prev) => prev.filter((p) => p.id !== id));
-    if (activePacket === id) { setActivePacket(null); setPhase("list"); }
+    setSaving(true);
+    try {
+      await deletePacketFB(firebaseId);
+      if (activePacket === firebaseId) { setActivePacket(null); setPhase("list"); }
+    } catch (err) { alert("Gagal menghapus: " + err.message); }
+    setSaving(false);
   };
 
-  const getPacket = () => toPackets.find((p) => p.id === activePacket);
-  const updatePacketQuestions = (qs) => {
-    setToPackets((prev) => prev.map((p) => p.id === activePacket ? { ...p, questions: qs } : p));
+  const getPacket = () => toPackets.find((p) => p._firebaseId === activePacket);
+  const updatePacketQuestions = async (qs) => {
+    const pkt = getPacket();
+    if (!pkt) return;
+    try {
+      await fbUpdatePkt({ ...pkt, questions: qs });
+    } catch (err) { alert("Gagal update: " + err.message); }
   };
 
   // ---- Add question to packet manually ----
@@ -1021,10 +1017,10 @@ function TryOut() {
     setEditingPktQ({ ...q, options: [...(q.options || ["", "", "", "", ""])] });
   };
 
-  const saveEditPktQ = () => {
+  const saveEditPktQ = async () => {
     if (!editingPktQ.question || !editingPktQ.topic) return alert("Isi soal dan topik!");
     const pkt = getPacket();
-    updatePacketQuestions(pkt.questions.map((q) => q.id === editingPktQ.id ? { ...editingPktQ } : q));
+    await updatePacketQuestions(pkt.questions.map((q) => q.id === editingPktQ.id ? { ...editingPktQ } : q));
     setEditingPktQ(null);
   };
 
@@ -1075,9 +1071,11 @@ function TryOut() {
             createdAt: new Date().toISOString(),
           };
         });
-        setToPackets((prev) => [...prev, ...newPackets]);
+        setSaving(true);
+        await fbImportPkts(newPackets);
         alert(`✅ ${newPackets.length} paket (${totalAdded} soal) berhasil diimpor!`);
-      } catch (err) { alert("Format JSON tidak valid! " + err.message); }
+        setSaving(false);
+      } catch (err) { alert("Format JSON tidak valid! " + err.message); setSaving(false); }
     };
     reader.readAsText(file);
     if (packetFileRef.current) packetFileRef.current.value = "";
@@ -1101,7 +1099,7 @@ function TryOut() {
 
   // ---- Start Exam ----
   const startExam = (packetId) => {
-    const pkt = toPackets.find((p) => p.id === packetId);
+    const pkt = toPackets.find((p) => p._firebaseId === packetId);
     if (!pkt || pkt.questions.length === 0) return alert("Paket ini belum ada soal!");
     setActivePacket(packetId);
     setExamQuestions([...pkt.questions]);
@@ -1139,7 +1137,7 @@ function TryOut() {
   const submitExam = () => {
     recordTime(currentQ);
     timer.pause();
-    const pkt = toPackets.find((p) => p.id === activePacket);
+    const pkt = toPackets.find((p) => p._firebaseId === activePacket);
     const totalQ = examQuestions.length;
 
     let totalScore = 0, correct = 0, wrong = 0, unanswered = 0;
@@ -1248,11 +1246,11 @@ function TryOut() {
               const dur = Math.round(getDuration(pkt) / 60);
               const subjectCounts = {};
               (pkt.questions || []).forEach((q) => { subjectCounts[q.subject] = (subjectCounts[q.subject] || 0) + 1; });
-              const timesCompleted = completedCounts[pkt.id] || 0;
-              const bestScore = tryoutHistory.filter((t) => t.packetId === pkt.id).reduce((best, t) => Math.max(best, t.score), 0);
+              const timesCompleted = completedCounts[pkt._firebaseId] || 0;
+              const bestScore = tryoutHistory.filter((t) => t.packetId === pkt._firebaseId).reduce((best, t) => Math.max(best, t.score), 0);
 
               return (
-                <Card key={pkt.id}>
+                <Card key={pkt._firebaseId}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
                       <h3 className="font-bold text-base">{pkt.name}</h3>
@@ -1272,15 +1270,15 @@ function TryOut() {
                       </div>
                     </div>
                     <div className="flex flex-col gap-1.5">
-                      <button onClick={() => startExam(pkt.id)} disabled={qCount === 0}
+                      <button onClick={() => startExam(pkt._firebaseId)} disabled={qCount === 0}
                         className="px-3 py-1.5 bg-[#0033A0] text-white rounded-lg text-xs font-medium disabled:opacity-40 hover:bg-blue-800 transition">
                         🚀 Mulai
                       </button>
-                      <button onClick={() => { setActivePacket(pkt.id); setPhase("manage"); }}
+                      <button onClick={() => { setActivePacket(pkt._firebaseId); setPhase("manage"); }}
                         className="px-3 py-1.5 bg-slate-100 dark:bg-slate-700 rounded-lg text-xs font-medium hover:bg-slate-200 dark:hover:bg-slate-600 transition">
                         ✏️ Kelola
                       </button>
-                      <button onClick={() => deletePacket(pkt.id)}
+                      <button onClick={() => deletePacket(pkt._firebaseId)}
                         className="px-3 py-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg text-xs font-medium transition">
                         🗑️ Hapus
                       </button>
@@ -1329,7 +1327,7 @@ function TryOut() {
             <div className="flex gap-2">
               <button onClick={() => setShowBankPicker(!showBankPicker)} className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium">📚 Dari Bank Soal</button>
               <button onClick={() => setShowAddQ(!showAddQ)} className="px-3 py-1.5 bg-[#0033A0] text-white rounded-lg text-xs font-medium">+ Tambah Manual</button>
-              <button onClick={() => startExam(pkt.id)} disabled={qCount === 0}
+              <button onClick={() => startExam(pkt._firebaseId)} disabled={qCount === 0}
                 className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium disabled:opacity-40">🚀 Mulai TO</button>
             </div>
           </div>
@@ -2314,13 +2312,14 @@ function ReviewPage() {
 
 // ==================== QUESTION BANK ====================
 function QuestionBank() {
-  const { questions, setQuestions } = useApp();
+  const { questions, addQuestion: fbAddQ, updateQuestion: fbUpdateQ, deleteQuestion: fbDeleteQ, deleteQuestions: fbDeleteQs, importQuestions: fbImportQs } = useApp();
   const [search, setSearch] = useState("");
   const [filterSubject, setFilterSubject] = useState("");
   const [filterDiff, setFilterDiff] = useState("");
   const [selected, setSelected] = useState(new Set());
   const [showAdd, setShowAdd] = useState(false);
-  const [editingQ, setEditingQ] = useState(null); // null or question object being edited
+  const [editingQ, setEditingQ] = useState(null);
+  const [saving, setSaving] = useState(false);
   const [newQ, setNewQ] = useState({
     subject: "biologi", topic: "", subtopic: "", difficulty: "sedang",
     question: "", options: ["", "", "", "", ""], correctAnswer: 0, explanation: "", tags: [],
@@ -2332,7 +2331,7 @@ function QuestionBank() {
     if (filterDiff && q.difficulty !== filterDiff) return false;
     if (search) {
       const s = search.toLowerCase();
-      return q.question.toLowerCase().includes(s) || q.topic.toLowerCase().includes(s) || q.subtopic.toLowerCase().includes(s);
+      return (q.question || "").toLowerCase().includes(s) || (q.topic || "").toLowerCase().includes(s) || (q.subtopic || "").toLowerCase().includes(s);
     }
     return true;
   });
@@ -2347,35 +2346,43 @@ function QuestionBank() {
 
   const selectAll = () => {
     if (selected.size === filtered.length) setSelected(new Set());
-    else setSelected(new Set(filtered.map((q) => q.id)));
+    else setSelected(new Set(filtered.map((q) => q._firebaseId || q.id)));
   };
 
-  const batchDelete = () => {
+  const batchDelete = async () => {
     if (selected.size === 0) return;
     if (!window.confirm(`Hapus ${selected.size} soal?`)) return;
-    setQuestions((prev) => prev.filter((q) => !selected.has(q.id)));
-    setSelected(new Set());
+    setSaving(true);
+    try {
+      const firebaseIds = questions.filter((q) => selected.has(q._firebaseId || q.id)).map((q) => q._firebaseId).filter(Boolean);
+      await fbDeleteQs(firebaseIds);
+      setSelected(new Set());
+    } catch (err) { alert("Gagal menghapus: " + err.message); }
+    setSaving(false);
   };
 
-  const duplicateSelected = () => {
-    const dupes = questions.filter((q) => selected.has(q.id)).map((q) => ({
-      ...q,
-      id: `q${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      question: `[DUPLIKAT] ${q.question}`,
-    }));
-    setQuestions((prev) => [...prev, ...dupes]);
-    setSelected(new Set());
+  const duplicateSelected = async () => {
+    setSaving(true);
+    try {
+      const dupes = questions.filter((q) => selected.has(q._firebaseId || q.id)).map((q) => {
+        const { _firebaseId, id, ...data } = q;
+        return { ...data, question: `[DUPLIKAT] ${q.question}` };
+      });
+      await fbImportQs(dupes);
+      setSelected(new Set());
+    } catch (err) { alert("Gagal duplikat: " + err.message); }
+    setSaving(false);
   };
 
-  const addQuestion = () => {
+  const addQuestion = async () => {
     if (!newQ.question || !newQ.topic) return alert("Isi soal dan topik!");
-    setQuestions((prev) => [...prev, {
-      ...newQ,
-      id: `q${Date.now()}`,
-      tags: [newQ.subject, newQ.topic, newQ.subtopic, newQ.difficulty].filter(Boolean),
-    }]);
-    setNewQ({ subject: "biologi", topic: "", subtopic: "", difficulty: "sedang", question: "", options: ["", "", "", "", ""], correctAnswer: 0, explanation: "", tags: [], image: "", explanationImage: "" });
-    setShowAdd(false);
+    setSaving(true);
+    try {
+      await fbAddQ({ ...newQ, tags: [newQ.subject, newQ.topic, newQ.subtopic, newQ.difficulty].filter(Boolean) });
+      setNewQ({ subject: "biologi", topic: "", subtopic: "", difficulty: "sedang", question: "", options: ["", "", "", "", ""], correctAnswer: 0, explanation: "", tags: [], image: "", explanationImage: "" });
+      setShowAdd(false);
+    } catch (err) { alert("Gagal menyimpan: " + err.message); }
+    setSaving(false);
   };
 
   const startEdit = (q) => {
@@ -2383,28 +2390,31 @@ function QuestionBank() {
     setShowAdd(false);
   };
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (!editingQ.question || !editingQ.topic) return alert("Isi soal dan topik!");
-    setQuestions((prev) => prev.map((q) => q.id === editingQ.id ? { ...editingQ, tags: [editingQ.subject, editingQ.topic, editingQ.subtopic, editingQ.difficulty].filter(Boolean) } : q));
-    setEditingQ(null);
+    setSaving(true);
+    try {
+      await fbUpdateQ({ ...editingQ, tags: [editingQ.subject, editingQ.topic, editingQ.subtopic, editingQ.difficulty].filter(Boolean) });
+      setEditingQ(null);
+    } catch (err) { alert("Gagal update: " + err.message); }
+    setSaving(false);
   };
 
   const fileInputRef = useRef(null);
 
-  const importJSON = (e) => {
+  const importJSON = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       try {
         const data = JSON.parse(ev.target.result);
         let qs = Array.isArray(data) ? data : data.questions || data.soal || [];
         if (!Array.isArray(qs) || qs.length === 0) {
-          alert("Tidak ada soal ditemukan. Pastikan JSON berisi array soal atau object dengan key 'questions'.");
+          alert("Tidak ada soal ditemukan.");
           return;
         }
         const validated = qs.map((q, i) => ({
-          id: q.id || `import_${Date.now()}_${i}`,
           subject: q.subject || q.mapel || "biologi",
           topic: q.topic || q.topik || "Umum",
           subtopic: q.subtopic || q.subtopik || "Umum",
@@ -2417,15 +2427,12 @@ function QuestionBank() {
           explanationImage: q.explanationImage || q.gambarPembahasan || "",
           tags: q.tags || [q.subject || "biologi", q.topic || "Umum"],
         })).filter(q => q.question.trim() !== "");
-        if (validated.length === 0) {
-          alert("Semua soal kosong atau format tidak sesuai.");
-          return;
-        }
-        setQuestions((prev) => [...prev, ...validated]);
-        alert(`✅ ${validated.length} soal berhasil diimpor!`);
-      } catch (err) {
-        alert("Format JSON tidak valid! Error: " + err.message);
-      }
+        if (validated.length === 0) { alert("Semua soal kosong."); return; }
+        setSaving(true);
+        await fbImportQs(validated);
+        alert(`✅ ${validated.length} soal berhasil diimpor ke Firebase!`);
+      } catch (err) { alert("Format JSON tidak valid! " + err.message); }
+      setSaving(false);
     };
     reader.readAsText(file);
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -2644,8 +2651,8 @@ function QuestionBank() {
           {filtered.slice(0, 100).map((q) => {
             const sub = SUBJECTS.find((s) => s.id === q.subject);
             return (
-              <div key={q.id} className="flex items-start gap-2 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                <input type="checkbox" checked={selected.has(q.id)} onChange={() => toggleSelect(q.id)} className="mt-1" />
+              <div key={q._firebaseId || q.id} className="flex items-start gap-2 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                <input type="checkbox" checked={selected.has(q._firebaseId || q.id)} onChange={() => toggleSelect(q._firebaseId || q.id)} className="mt-1" />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5 mb-0.5">
                     <span className="text-xs" style={{ color: sub?.color }}>{sub?.icon}</span>
@@ -2668,39 +2675,24 @@ function QuestionBank() {
 
 // ==================== SETTINGS ====================
 function Settings({ exportData, importData }) {
-  const { darkMode, setDarkMode, fontSize, setFontSize, userName, setUserName, goals, setGoals, questions, syncFromSheets, sheetLoading, sheetStatus } = useApp();
+  const { darkMode, setDarkMode, fontSize, setFontSize, userName, setUserName, goals, setGoals, questions, toPackets, fbLoading } = useApp();
 
   return (
     <div className="space-y-4 animate-in">
       <h1 className="text-2xl font-bold">⚙️ Pengaturan</h1>
 
-      <Card title="📊 Google Sheets Sync">
-        <div className="space-y-3">
-          <p className="text-sm text-slate-500">
-            Soal diambil otomatis dari Google Sheets saat halaman dibuka. Klik tombol di bawah untuk sync manual.
-          </p>
-          <div className="flex items-center gap-3">
-            <button onClick={() => syncFromSheets(false)} disabled={sheetLoading}
-              className={cn("px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium flex items-center gap-2", sheetLoading && "opacity-60")}>
-              {sheetLoading ? "⏳ Syncing..." : "🔄 Sync dari Google Sheets"}
-            </button>
-            {!SHEET_CONFIG.bankSoal && !SHEET_CONFIG.paketTO && (
-              <span className="text-xs text-amber-600">⚠️ URL belum diisi di SHEET_CONFIG</span>
-            )}
+      <Card title="🔥 Firebase Status">
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <span className={cn("w-3 h-3 rounded-full", fbLoading ? "bg-yellow-400 animate-pulse" : "bg-green-500")} />
+            <span className="text-sm font-medium">{fbLoading ? "Memuat data..." : "Terhubung ke Firebase"}</span>
           </div>
-          {sheetStatus && <p className="text-sm">{sheetStatus}</p>}
-          <details className="text-xs text-slate-400">
-            <summary className="cursor-pointer hover:text-slate-600">📖 Cara setup Google Sheets</summary>
-            <div className="mt-2 space-y-1 pl-2 border-l-2 border-slate-200 dark:border-slate-700">
-              <p>1. Buat Google Spreadsheet baru</p>
-              <p>2. Baris pertama = header kolom: <code>subject, topic, subtopic, difficulty, question, options, correctAnswer, explanation, image, explanationImage</code></p>
-              <p>3. Kolom <code>options</code> isi dengan format: <code>Opsi A|Opsi B|Opsi C|Opsi D|Opsi E</code> (pisah pakai |)</p>
-              <p>4. Kolom <code>correctAnswer</code> isi angka 0-4 (0=A, 1=B, dst) atau huruf A-E</p>
-              <p>5. File → Share → Publish to web → pilih sheet → CSV → Publish</p>
-              <p>6. Copy URL, paste di <code>SHEET_CONFIG.bankSoal</code> di kode App.js</p>
-              <p>7. Untuk Paket TO, tambah kolom <code>packet</code> (nama paket) di sheet ke-2, lalu paste URL di <code>SHEET_CONFIG.paketTO</code></p>
-            </div>
-          </details>
+          <div className="text-sm text-slate-500">
+            Bank Soal: <strong>{questions.length}</strong> soal • Paket TO: <strong>{toPackets.length}</strong> paket
+          </div>
+          <p className="text-xs text-slate-400">
+            Semua data soal & paket TO tersimpan di Firebase. Perubahan otomatis terlihat oleh semua user.
+          </p>
         </div>
       </Card>
 
